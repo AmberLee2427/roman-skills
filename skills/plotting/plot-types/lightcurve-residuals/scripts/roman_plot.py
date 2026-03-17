@@ -154,8 +154,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=10000.0,
         help="Auto-offset modulus for large dates (default: 10000)",
     )
-    parser.add_argument("--y-label", default="Value", help="Y-axis label")
-    parser.add_argument("--title", default="Roman Plot", help="Figure title")
+    parser.add_argument(
+        "--y-label",
+        default="",
+        help=(
+            "Manual y-axis label override. Prefer structured label inputs "
+            "(--y-band/--y-scale/--y-unit)."
+        ),
+    )
+    parser.add_argument(
+        "--y-band",
+        default="",
+        help="Band/filter tag for y-axis label construction (for example: W146).",
+    )
+    parser.add_argument(
+        "--y-scale",
+        default="",
+        help="Scale descriptor for y-axis label construction (for example: normalized).",
+    )
+    parser.add_argument(
+        "--y-unit",
+        default="",
+        help="Y-axis unit for label construction (for example: mag).",
+    )
+    parser.add_argument("--title", default="", help="Figure title")
     parser.add_argument(
         "--vline",
         action="append",
@@ -765,6 +787,54 @@ def fit_normalization(
     return 1.0, 0.0
 
 
+def residual_axis_label(y_kind: str, y_label: str) -> str:
+    unit_match = re.search(r"\(([^)]+)\)", y_label)
+    if unit_match:
+        unit = unit_match.group(1).strip()
+        if unit:
+            return f"Residual ({unit})"
+    unit_by_kind = {
+        "magnitude": "mag",
+        "flux": "flux",
+        "magnification": "magnification",
+        "delta_flux": "delta flux",
+    }
+    unit = unit_by_kind.get(y_kind, "")
+    return f"Residual ({unit})" if unit else "Residual"
+
+
+def build_y_axis_label(
+    y_kind: str,
+    y_label_override: str,
+    y_band: str,
+    y_scale: str,
+    y_unit: str,
+) -> tuple[str, bool]:
+    override = y_label_override.strip()
+    if override:
+        return override, True
+
+    if y_kind == "magnitude":
+        base = f"{y_band.strip()} Magnitude".strip() if y_band.strip() else "Magnitude"
+        default_unit = "mag"
+    elif y_kind == "flux":
+        base = f"{y_band.strip()} Flux".strip() if y_band.strip() else "Flux"
+        default_unit = ""
+    elif y_kind == "delta_flux":
+        base = f"{y_band.strip()} Delta Flux".strip() if y_band.strip() else "Delta Flux"
+        default_unit = ""
+    else:
+        base = "Magnification"
+        default_unit = ""
+
+    if y_scale.strip():
+        base = f"{y_scale.strip()} {base}"
+    unit = y_unit.strip() if y_unit.strip() else default_unit
+    if unit:
+        return f"{base} ({unit})", False
+    return base, False
+
+
 def render_lightcurve(
     args: argparse.Namespace, df: pd.DataFrame | None = None
 ) -> tuple[plt.Figure, dict]:
@@ -787,6 +857,13 @@ def render_lightcurve(
         plt.rcParams["font.family"] = "serif"
     if df is None:
         df = pd.read_csv(args.input)
+    y_axis_label, used_manual_y_label = build_y_axis_label(
+        y_kind=y_kind,
+        y_label_override=args.y_label,
+        y_band=args.y_band,
+        y_scale=args.y_scale,
+        y_unit=args.y_unit,
+    )
     bands = parse_band_specs(args, df, y_kind)
     band_y_kinds = sorted({str(b["y_kind"]) for b in bands})
     if len(band_y_kinds) != 1:
@@ -1000,9 +1077,10 @@ def render_lightcurve(
             }
 
     series = []
+    residual_y_label = residual_axis_label(y_kind, y_axis_label)
     if ax_resid is not None:
         ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
-        ax_resid.set_ylabel("Residual")
+        ax_resid.set_ylabel(residual_y_label)
 
     zoom_model_x = None
     zoom_model_y = None
@@ -1059,19 +1137,22 @@ def render_lightcurve(
         if state["model_y"] is not None:
             model_y_norm = scale * np.asarray(state["model_y"]) + offset
             state["model_y_norm"] = model_y_norm
+            model_label = "Model" if (not multi_band and label.lower() == "data") else f"{label} Model"
+            model_linestyle = "-" if not multi_band else ["-", "--", "-.", ":"][idx % 4]
+            model_color = args.model_color if not multi_band else "#1f1f1f"
             (model_line,) = ax.plot(
                 np.asarray(state["model_x_plot"]),
                 model_y_norm,
-                "-",
+                model_linestyle,
                 lw=1.6,
-                color=color,
+                color=model_color,
                 alpha=0.95,
-                label=f"{label} Model",
+                label=model_label,
                 zorder=8,
             )
             series.append(
                 {
-                    "name": f"{label} Model",
+                    "name": model_label,
                     "color": model_line.get_color(),
                     "marker": model_line.get_marker(),
                     "linestyle": model_line.get_linestyle(),
@@ -1277,7 +1358,7 @@ def render_lightcurve(
             "Title present. If title does not add clarifying information, prefer a detailed caption instead."
         )
         legend_labels = [str(item["name"]) for item in series]
-        axis_words = token_words(x_axis_label) | token_words(args.y_label)
+        axis_words = token_words(x_axis_label) | token_words(y_axis_label)
         legend_words = set()
         for label in legend_labels:
             legend_words |= token_words(label)
@@ -1288,10 +1369,24 @@ def render_lightcurve(
                 "Style error: title repeats axis/legend words: "
                 + ", ".join(overlap)
             )
+    if y_kind == "magnitude" and not multi_band:
+        y_lower = y_axis_label.lower()
+        band_name = str(bands[0]["label"]).strip().lower()
+        has_band = bool(band_name and band_name != "data" and band_name in y_lower)
+        if not has_band:
+            validation_warnings.append(
+                "Magnitude y-axis label does not include a filter/band tag "
+                "(for example, 'W146 Magnitude (mag)')."
+            )
+    if used_manual_y_label:
+        validation_warnings.append(
+            "Manual y-label override used. Prefer structured label inputs: "
+            "--y-band, --y-scale, --y-unit."
+        )
 
     ax.set_title(args.title)
     ax.set_xlabel(x_axis_label if ax_resid is None else "")
-    ax.set_ylabel(args.y_label)
+    ax.set_ylabel(y_axis_label)
 
     # Standard astronomy convention for magnitude-based plots.
     if mode_for_render == "magnitude":
@@ -1396,9 +1491,10 @@ def render_lightcurve(
             "baseline": baseline_metadata,
             "residual_source": residual_source if has_model else "none",
             "vertical_annotations": vlines,
-            "labels": {"x": x_axis_label, "y": args.y_label},
+            "labels": {"x": x_axis_label, "y": y_axis_label},
+            "residual_y_label": residual_y_label,
             "labels_include_units": ("(" in x_axis_label and ")" in x_axis_label)
-            and ("(" in args.y_label and ")" in args.y_label),
+            and ("(" in y_axis_label and ")" in y_axis_label),
         },
         "exports": [
             {"format": "pdf", "path": str(pdf_path.resolve())},
