@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def has_vector_export(exports: list[dict]) -> bool:
-    return any(e.get("format") in {"pdf", "svg"} for e in exports)
+    return any(e.get("format") in {"pdf", "eps", "svg"} for e in exports)
 
 
 def has_preferred_vector_format(exports: list[dict], preferred_formats: list[str]) -> bool:
@@ -64,14 +64,34 @@ def luminance(rgb: tuple[int, int, int]) -> float:
 
 
 def grayscale_distinguishable(series: list[dict], min_lum_distance: float = 30.0) -> bool:
-    colors = [parse_hex_color(s.get("color")) for s in series]
-    colors = [c for c in colors if c is not None]
-    if len(colors) < 2:
+    parsed = []
+    for item in series:
+        color = parse_hex_color(item.get("color"))
+        if color is None:
+            continue
+        parsed.append(
+            {
+                "color": color,
+                "marker": str(item.get("marker", "")),
+                "linestyle": str(item.get("linestyle", "")),
+            }
+        )
+    if len(parsed) < 2:
         return True
-    for i in range(len(colors)):
-        for j in range(i + 1, len(colors)):
-            if math.fabs(luminance(colors[i]) - luminance(colors[j])) < min_lum_distance:
-                return False
+    for i in range(len(parsed)):
+        for j in range(i + 1, len(parsed)):
+            lum_close = (
+                math.fabs(luminance(parsed[i]["color"]) - luminance(parsed[j]["color"]))
+                < min_lum_distance
+            )
+            if not lum_close:
+                continue
+            if (
+                parsed[i]["marker"] != parsed[j]["marker"]
+                or parsed[i]["linestyle"] != parsed[j]["linestyle"]
+            ):
+                continue
+            return False
     return True
 
 
@@ -150,6 +170,14 @@ def marker_or_style_distinguishable(series: list[dict]) -> bool:
     return True
 
 
+def gridlines_disabled(figure: dict) -> bool:
+    return not bool(figure.get("gridlines_enabled", False))
+
+
+def minor_ticks_disabled(figure: dict) -> bool:
+    return not bool(figure.get("minor_ticks_enabled", False))
+
+
 def main() -> None:
     args = parse_args()
     profiles = load_profiles()
@@ -218,6 +246,10 @@ def main() -> None:
         checks["grayscale_distinguishable"] = grayscale_distinguishable(series)
     if bool(profile.get("avoid_colored_text", False)):
         checks["annotation_text_neutral"] = no_colored_annotation_text(figure)
+    if bool(profile.get("avoid_gridlines", False)):
+        checks["gridlines_disabled"] = gridlines_disabled(figure)
+    if bool(profile.get("avoid_minor_ticks", False)):
+        checks["minor_ticks_disabled"] = minor_ticks_disabled(figure)
     if bool(profile.get("require_marker_or_style_redundancy", False)):
         checks["marker_or_style_redundancy"] = marker_or_style_distinguishable(series)
     if bool(profile.get("forbid_figure_title", False)):

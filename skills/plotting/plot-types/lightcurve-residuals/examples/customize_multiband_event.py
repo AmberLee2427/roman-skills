@@ -125,6 +125,8 @@ def main() -> None:
 
     manifest["figure"]["postprocess_customized"] = True
     manifest["figure"]["policy_profile"] = "customized-from-strict"
+    manifest["figure"]["gridlines_enabled"] = True
+    manifest["figure"]["minor_ticks_enabled"] = True
     manifest["validation"]["warnings"].append(
         "Post-processing customization applied: gridlines."
     )

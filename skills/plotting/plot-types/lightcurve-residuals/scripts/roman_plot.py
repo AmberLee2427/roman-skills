@@ -219,6 +219,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Exact figure height in inches. Overrides automatic height selection.",
     )
     parser.add_argument(
+        "--vector-format",
+        choices=["pdf", "eps", "svg"],
+        help=(
+            "Vector export format override. By default, uses the first preferred "
+            "vector format from the selected journal profile, falling back to PDF."
+        ),
+    )
+    parser.add_argument(
         "--journal-profile",
         help=(
             "Journal rendering profile (for example: apj, nature, science, mnras). "
@@ -536,11 +544,12 @@ def normalization_suffix(meta: dict[str, float | str], band_label: str) -> str:
     parts: list[str] = []
     if mode == "additive":
         sign = "+" if offset >= 0 else "-"
-        parts.append(f"{sign} {format_numeric_label_value(abs(offset))}")
+        parts.append(f"${sign}\\,{format_numeric_label_value(abs(offset))}$")
     elif mode == "affine":
-        parts.append(f"x {format_numeric_label_value(scale)}")
         sign = "+" if offset >= 0 else "-"
-        parts.append(f"{sign} {format_numeric_label_value(abs(offset))}")
+        parts.append(
+            f"$\\times\\,{format_numeric_label_value(scale)}\\,{sign}\\,{format_numeric_label_value(abs(offset))}$"
+        )
     return " " + " ".join(parts) if parts else ""
 
 
@@ -707,6 +716,28 @@ def resolved_graphics_style(
     for key, value in span_styles.items():
         merged[str(key)] = float(value)
     return merged
+
+
+def resolved_png_dpi(journal_profile: dict[str, object] | None) -> int:
+    if not journal_profile:
+        return 300
+    return max(300, int(journal_profile.get("min_png_dpi", 300)))
+
+
+def resolved_vector_format(
+    journal_profile: dict[str, object] | None,
+    override: str | None,
+) -> str:
+    if override:
+        return override
+    if journal_profile:
+        preferred = journal_profile.get("preferred_vector_formats", [])
+        if isinstance(preferred, list):
+            for item in preferred:
+                candidate = str(item).lower()
+                if candidate in {"pdf", "eps", "svg"}:
+                    return candidate
+    return "pdf"
 
 
 def infer_band_wavelength_key(band_label: str) -> tuple[int, float, str]:
@@ -1258,6 +1289,8 @@ def render_lightcurve(
     )
     font_sizes = resolved_font_sizes(args.paper_span, journal_profile)
     graphics_style = resolved_graphics_style(args.paper_span, journal_profile)
+    export_png_dpi = resolved_png_dpi(journal_profile)
+    vector_format = resolved_vector_format(journal_profile, args.vector_format)
     resolved_font_family = apply_publication_rcparams(
         font_sizes=font_sizes,
         tex_enabled=resolved_tex,
@@ -1826,7 +1859,7 @@ def render_lightcurve(
     fig.tight_layout()
 
     output_stem = Path(args.output)
-    pdf_path = output_stem.with_suffix(".pdf")
+    vector_path = output_stem.with_suffix(f".{vector_format}")
     png_path = output_stem.with_suffix(".png")
 
     manifest_path = (
@@ -1838,13 +1871,14 @@ def render_lightcurve(
         "status": "ok",
         "summary": "Generated lightcurve figure",
         "artifacts": [
-            str(pdf_path.resolve()),
+            str(vector_path.resolve()),
             str(png_path.resolve()),
             str(manifest_path.resolve()),
         ],
         "figure": {
             "title": args.title,
             "journal_profile": args.journal_profile,
+            "vector_format": vector_format,
             "paper_span": args.paper_span,
             "figure_width_in": figure_geometry["width_in"],
             "figure_height_in": figure_geometry["height_in"],
@@ -1882,8 +1916,8 @@ def render_lightcurve(
             and ("(" in y_axis_label and ")" in y_axis_label),
         },
         "exports": [
-            {"format": "pdf", "path": str(pdf_path.resolve())},
-            {"format": "png", "path": str(png_path.resolve()), "dpi": 300},
+            {"format": vector_format, "path": str(vector_path.resolve())},
+            {"format": "png", "path": str(png_path.resolve()), "dpi": export_png_dpi},
         ],
         "series": series,
         "provenance": {"input": str(Path(args.input).resolve())},
@@ -1895,21 +1929,27 @@ def render_lightcurve(
 def write_outputs(fig: plt.Figure, manifest: dict, args: argparse.Namespace) -> None:
     output_stem = Path(args.output)
     output_stem.parent.mkdir(parents=True, exist_ok=True)
-    pdf_path = output_stem.with_suffix(".pdf")
     png_path = output_stem.with_suffix(".png")
+    vector_format = str(manifest.get("figure", {}).get("vector_format", "pdf"))
+    vector_path = output_stem.with_suffix(f".{vector_format}")
+    png_dpi = 300
+    for item in manifest.get("exports", []):
+        if item.get("format") == "png":
+            png_dpi = int(item.get("dpi", png_dpi))
+            break
     manifest_path = (
         Path(args.manifest_output)
         if args.manifest_output
         else output_stem.with_suffix(".meta.json")
     )
-    fig.savefig(pdf_path)
-    fig.savefig(png_path, dpi=300)
+    fig.savefig(vector_path)
+    fig.savefig(png_path, dpi=png_dpi)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
     for warning in manifest.get("validation", {}).get("warnings", []):
         print(f"Warning: {warning}")
-    print(f"Saved: {pdf_path}")
+    print(f"Saved: {vector_path}")
     print(f"Saved: {png_path}")
     print(f"Saved: {manifest_path}")
 

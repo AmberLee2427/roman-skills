@@ -102,6 +102,8 @@ def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
 
     manifest["figure"]["postprocess_customized"] = True
     manifest["figure"]["policy_profile"] = "customized-from-strict"
+    manifest["figure"]["gridlines_enabled"] = True
+    manifest["figure"]["minor_ticks_enabled"] = True
     manifest["validation"]["warnings"].append(
         "Post-processing customization applied: gridlines."
     )

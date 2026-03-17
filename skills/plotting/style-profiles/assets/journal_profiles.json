@@ -80,16 +80,16 @@
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       },
       "double": {
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       }
     },
@@ -141,16 +141,16 @@
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       },
       "double": {
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       }
     },
@@ -205,16 +205,16 @@
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       },
       "double": {
         "base": 7.0,
         "title": 7.0,
         "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
+        "tick": 6.5,
+        "legend": 6.5,
         "annotation": 6.0
       }
     },
@@ -274,20 +274,20 @@
     "tex_default": false,
     "font_sizes_pt": {
       "single": {
-        "base": 7.0,
-        "title": 7.0,
-        "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
-        "annotation": 6.0
+        "base": 5.8,
+        "title": 5.8,
+        "label": 5.8,
+        "tick": 5.0,
+        "legend": 5.0,
+        "annotation": 5.0
       },
       "double": {
-        "base": 7.0,
-        "title": 7.0,
-        "label": 7.0,
-        "tick": 6.0,
-        "legend": 6.0,
-        "annotation": 6.0
+        "base": 5.8,
+        "title": 5.8,
+        "label": 5.8,
+        "tick": 5.0,
+        "legend": 5.0,
+        "annotation": 5.0
       }
     },
     "graphics_style_pt": {
@@ -321,7 +321,9 @@
     "accepted_raster_formats": ["png", "jpg", "jpeg", "tif", "tiff"],
     "require_units": true,
     "grayscale_distinguishable": false,
-    "forbid_figure_title": true
+    "forbid_figure_title": true,
+    "avoid_gridlines": true,
+    "avoid_minor_ticks": true
   },
   "mnras": {
     "label": "MNRAS",

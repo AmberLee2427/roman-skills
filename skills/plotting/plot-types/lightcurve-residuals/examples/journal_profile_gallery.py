@@ -76,15 +76,34 @@ def run_profile(mod, profile: str, paper_span: str, out_stem: Path) -> None:
     ]
     args = roman.parse_args(argv)
     fig, manifest = roman.render_lightcurve(args)
+    journal_profiles = roman.load_journal_profiles()
+    profile_spec = journal_profiles.get(profile, {})
+    avoid_gridlines = bool(profile_spec.get("avoid_gridlines", False))
+    avoid_minor_ticks = bool(profile_spec.get("avoid_minor_ticks", False))
     for axis in fig.axes:
-        axis.grid(True, which="major", alpha=0.24, linestyle="--")
-        axis.minorticks_on()
-        axis.grid(True, which="minor", alpha=0.10, linestyle=":")
+        if avoid_gridlines:
+            axis.grid(False, which="both")
+        else:
+            axis.grid(True, which="major", alpha=0.24, linestyle="--")
+        if avoid_minor_ticks:
+            axis.minorticks_off()
+        else:
+            axis.minorticks_on()
+        if not avoid_gridlines and not avoid_minor_ticks:
+            axis.grid(True, which="minor", alpha=0.10, linestyle=":")
     manifest["figure"]["postprocess_customized"] = True
     manifest["figure"]["policy_profile"] = "customized-from-strict"
-    manifest["validation"]["warnings"].append(
-        "Post-processing customization applied: gridlines."
-    )
+    manifest["figure"]["gridlines_enabled"] = not avoid_gridlines
+    manifest["figure"]["minor_ticks_enabled"] = not avoid_minor_ticks
+    customizations: list[str] = []
+    if not avoid_gridlines:
+        customizations.append("gridlines")
+    if not avoid_minor_ticks:
+        customizations.append("minor ticks")
+    if customizations:
+        manifest["validation"]["warnings"].append(
+            "Post-processing customization applied: " + ", ".join(customizations) + "."
+        )
     roman.write_outputs(fig, manifest, args)
 
 
