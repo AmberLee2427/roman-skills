@@ -39,6 +39,9 @@ Skill repository for autonomous Roman Space Telescope analysis workflows.
 - Data + best-fit model + optional initial model
 - Optional transparent posterior sample overlays
 - Residual panel generation
+- Optional `--model-x-col` for higher-resolution model/posterior/initial curves
+- Residual-panel error bars when `--err-col` is provided
+- If model/data x-cadence differs, provide residuals explicitly via `--residual-col`
 - Manifest output for downstream quality gates
 
 `skills/plotting/accessibility-checks/scripts/check_accessibility.py` uses:
