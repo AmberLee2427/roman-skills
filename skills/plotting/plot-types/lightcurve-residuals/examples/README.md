@@ -6,6 +6,7 @@ This folder shows how to:
 2. Apply controlled post-processing customizations in your own script.
 3. Explicitly mark customized figures in manifest metadata.
 4. Build a composite figure containing two lightcurves as subplots.
+5. Inspect multiband plot aesthetics before promoting a style.
 
 These examples use the importable API added to:
 
@@ -57,7 +58,36 @@ Outputs:
 - `tmp/examples/custom_single_event.png`
 - `tmp/examples/custom_single_event.meta.json`
 
-## Example 2: Two lightcurves as subplots
+## Example 2: Multiband event for aesthetic review
+
+Script:
+
+- `customize_multiband_event.py`
+
+What it does:
+
+1. Creates a synthetic three-band event CSV.
+2. Calls strict rendering via `render_lightcurve`.
+3. Uses additive normalization to align all bands to `W146`.
+4. Uses the `science` journal profile with the `double` paper-span preset to preview a two-column-width figure.
+5. Builds the y-axis label from structured metadata (`Normalized Magnitude (mag)`).
+6. Turns on major/minor grid lines in both panels.
+7. Marks manifest as customized.
+8. Writes PDF/PNG/manifest.
+
+Run:
+
+```bash
+python skills/plotting/plot-types/lightcurve-residuals/examples/customize_multiband_event.py
+```
+
+Outputs:
+
+- `tmp/examples/custom_multiband_event.pdf`
+- `tmp/examples/custom_multiband_event.png`
+- `tmp/examples/custom_multiband_event.meta.json`
+
+## Example 3: Two lightcurves as subplots
 
 Script:
 
@@ -67,7 +97,7 @@ What it does:
 
 1. Creates two synthetic event CSV files with different anomaly timing/shape.
 2. Renders each event with strict defaults via `render_lightcurve`.
-3. Applies per-event customization (grid + in-panel labels).
+3. Applies per-event customization (grid) and sets explicit subplot titles in the source renders.
 4. Marks each manifest as customized.
 5. Saves each customized event output.
 6. Builds a combined two-row subplot figure by embedding each rendered panel as an image.
@@ -91,6 +121,38 @@ Outputs:
 - Combined 2-row subplot figure:
   - `tmp/examples/two_events_subplots.pdf`
   - `tmp/examples/two_events_subplots.png`
+
+## Example 4: Journal profile gallery
+
+Script:
+
+- `journal_profile_gallery.py`
+
+What it does:
+
+1. Reuses the same synthetic multiband event across several journal profiles.
+2. Renders profile-specific outputs for `apj`, `nature-initial`, `nature-revised`, `science`, and `mnras` at both `single` and `double` span.
+3. Saves a style-check JSON report for each rendered figure.
+
+Run:
+
+```bash
+python skills/plotting/plot-types/lightcurve-residuals/examples/journal_profile_gallery.py
+```
+
+Outputs:
+
+- `tmp/examples/journal-profile-gallery/multiband_apj_single.png`
+- `tmp/examples/journal-profile-gallery/multiband_apj_double.png`
+- `tmp/examples/journal-profile-gallery/multiband_nature-initial_single.png`
+- `tmp/examples/journal-profile-gallery/multiband_nature-initial_double.png`
+- `tmp/examples/journal-profile-gallery/multiband_nature-revised_single.png`
+- `tmp/examples/journal-profile-gallery/multiband_nature-revised_double.png`
+- `tmp/examples/journal-profile-gallery/multiband_science_single.png`
+- `tmp/examples/journal-profile-gallery/multiband_science_double.png`
+- `tmp/examples/journal-profile-gallery/multiband_mnras_single.png`
+- `tmp/examples/journal-profile-gallery/multiband_mnras_double.png`
+- Matching `.meta.json` and `.style.json` files for each render
 
 ## Notes and caveats
 

@@ -34,6 +34,20 @@ except ImportError as exc:
     ) from exc
 
 
+JOURNAL_PROFILES_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "style-profiles"
+    / "assets"
+    / "journal_profiles.json"
+)
+
+
+def load_journal_profiles() -> dict[str, dict[str, object]]:
+    if not JOURNAL_PROFILES_PATH.exists():
+        raise SystemExit(f"Journal profiles file not found: {JOURNAL_PROFILES_PATH}")
+    return json.loads(JOURNAL_PROFILES_PATH.read_text())
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a Roman analysis plot")
     parser.add_argument("--input", required=True, help="Input CSV path")
@@ -69,6 +83,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-color",
         default="#e69f00",
         help="Line color for best-fit model overlay",
+    )
+    parser.add_argument(
+        "--best-fit-label",
+        choices=["mle", "map", "model"],
+        default="mle",
+        help=(
+            "Legend label semantics for --model-col. Use 'mle' for maximum "
+            "likelihood, 'map' for maximum a posteriori, or 'model' if the "
+            "estimator is unknown."
+        ),
     )
     parser.add_argument(
         "--initial-model-col",
@@ -178,6 +202,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Y-axis unit for label construction (for example: mag).",
     )
     parser.add_argument("--title", default="", help="Figure title")
+    parser.add_argument(
+        "--paper-span",
+        choices=["single", "double"],
+        default="single",
+        help="Publication width preset: single-column or double-column span.",
+    )
+    parser.add_argument(
+        "--figure-width-in",
+        type=float,
+        help="Exact figure width in inches. Overrides --paper-span width preset.",
+    )
+    parser.add_argument(
+        "--figure-height-in",
+        type=float,
+        help="Exact figure height in inches. Overrides automatic height selection.",
+    )
+    parser.add_argument(
+        "--journal-profile",
+        help=(
+            "Journal rendering profile (for example: apj, nature, science, mnras). "
+            "When set, paper width and typography defaults come from the shared profile."
+        ),
+    )
     parser.add_argument(
         "--vline",
         action="append",
@@ -304,10 +351,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--tex",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Enable LaTeX text rendering (default: on). Use --no-tex to disable.",
+        default=None,
+        help=(
+            "Enable LaTeX text rendering. If omitted, the selected journal profile "
+            "controls the default. Use --no-tex to disable explicitly."
+        ),
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.journal_profile:
+        profiles = load_journal_profiles()
+        if args.journal_profile not in profiles:
+            available = ", ".join(sorted(profiles))
+            raise SystemExit(
+                f"Unknown --journal-profile '{args.journal_profile}'. "
+                f"Available profiles: {available}"
+            )
+    return args
 
 
 def check_tex_dependencies() -> None:
@@ -449,6 +508,257 @@ def token_words(text: str) -> set[str]:
     words = re.findall(r"[A-Za-z0-9_]+", text.lower())
     stop = {"the", "and", "or", "of", "to", "in", "on", "for", "with", "a", "an"}
     return {w for w in words if w not in stop}
+
+
+def format_numeric_label_value(value: float) -> str:
+    rounded = round(value)
+    if abs(value - rounded) < 1e-9:
+        return str(int(rounded))
+    return f"{value:.3f}".rstrip("0").rstrip(".")
+
+
+def math_band_label(band_label: str, reference: bool = False) -> str:
+    suffix = "^*" if reference else ""
+    return f"$\\mathrm{{{band_label}}}{suffix}$"
+
+
+def normalization_suffix(meta: dict[str, float | str], band_label: str) -> str:
+    mode = str(meta.get("mode", "none"))
+    if mode == "none":
+        return ""
+
+    ref = str(meta.get("reference_band", "")).strip()
+    if ref == band_label:
+        return ""
+
+    scale = float(meta.get("scale", 1.0))
+    offset = float(meta.get("offset", 0.0))
+    parts: list[str] = []
+    if mode == "additive":
+        sign = "+" if offset >= 0 else "-"
+        parts.append(f"{sign} {format_numeric_label_value(abs(offset))}")
+    elif mode == "affine":
+        parts.append(f"x {format_numeric_label_value(scale)}")
+        sign = "+" if offset >= 0 else "-"
+        parts.append(f"{sign} {format_numeric_label_value(abs(offset))}")
+    return " " + " ".join(parts) if parts else ""
+
+
+def data_series_label(meta: dict[str, float | str], band_label: str) -> str:
+    ref = str(meta.get("reference_band", "")).strip()
+    mode = str(meta.get("mode", "none"))
+    if mode != "none" and ref == band_label:
+        return f"{math_band_label(band_label, reference=True)} Data"
+    if mode != "none":
+        return f"{math_band_label(band_label)} Data{normalization_suffix(meta, band_label)}"
+    return f"{band_label} Data"
+
+
+def best_fit_series_label(
+    estimator: str,
+    band_label: str,
+    multi_band: bool,
+) -> str:
+    estimator_text = {
+        "mle": "MLE",
+        "map": "MAP",
+        "model": "Model",
+    }[estimator]
+    if estimator_text == "Model":
+        return (
+            f"{math_band_label(band_label)} Model"
+            if multi_band or band_label.lower() != "data"
+            else "Model"
+        )
+    return (
+        f"{math_band_label(band_label)} {estimator_text} Model"
+        if multi_band or band_label.lower() != "data"
+        else f"{estimator_text} Model"
+    )
+
+
+def publication_figure_geometry(
+    paper_span: str,
+    has_residual_panel: bool,
+    figure_width_in: float | None,
+    figure_height_in: float | None,
+    journal_profile: dict[str, object] | None,
+) -> tuple[tuple[float, float], dict[str, float | str]]:
+    span_widths = {"single": 3.4, "double": 7.0}
+    if journal_profile:
+        profile_widths = journal_profile.get("paper_width_in", {})
+        if isinstance(profile_widths, dict):
+            span_widths = {
+                **span_widths,
+                **{
+                    str(k): float(v)
+                    for k, v in profile_widths.items()
+                    if str(k) in {"single", "double"}
+                },
+            }
+    width = float(figure_width_in) if figure_width_in is not None else span_widths[paper_span]
+    if width <= 0:
+        raise SystemExit("--figure-width-in must be positive.")
+
+    if figure_height_in is not None:
+        height = float(figure_height_in)
+    elif has_residual_panel:
+        height = width * (1.12 if paper_span == "single" else 0.78)
+    else:
+        height = width * (0.82 if paper_span == "single" else 0.62)
+    if height <= 0:
+        raise SystemExit("--figure-height-in must be positive.")
+
+    geometry = {
+        "paper_span": paper_span,
+        "width_in": width,
+        "height_in": height,
+        "has_residual_panel": bool(has_residual_panel),
+    }
+    return (width, height), geometry
+
+
+def publication_font_sizes(paper_span: str) -> dict[str, float]:
+    if paper_span == "double":
+        return {
+            "base": 10.0,
+            "title": 10.5,
+            "label": 10.0,
+            "tick": 9.0,
+            "legend": 9.0,
+            "annotation": 8.5,
+        }
+    return {
+        "base": 8.5,
+        "title": 9.0,
+        "label": 8.5,
+        "tick": 7.5,
+        "legend": 7.5,
+        "annotation": 7.0,
+    }
+
+
+def resolved_font_sizes(
+    paper_span: str,
+    journal_profile: dict[str, object] | None,
+) -> dict[str, float]:
+    defaults = publication_font_sizes(paper_span)
+    if not journal_profile:
+        return defaults
+    profile_sizes = journal_profile.get("font_sizes_pt", {})
+    if not isinstance(profile_sizes, dict):
+        return defaults
+    span_sizes = profile_sizes.get(paper_span, {})
+    if not isinstance(span_sizes, dict):
+        return defaults
+    merged = dict(defaults)
+    for key, value in span_sizes.items():
+        merged[str(key)] = float(value)
+    return merged
+
+
+def apply_publication_rcparams(
+    font_sizes: dict[str, float],
+    tex_enabled: bool,
+    journal_profile: dict[str, object] | None,
+) -> str:
+    plt.rcdefaults()
+    plt.rcParams["text.usetex"] = bool(tex_enabled)
+
+    font_family = "serif"
+    if journal_profile:
+        font_family = str(journal_profile.get("font_family", font_family))
+        candidates = journal_profile.get("font_family_candidates", [])
+        if isinstance(candidates, list) and candidates:
+            rc_key = "font.serif" if font_family == "serif" else "font.sans-serif"
+            plt.rcParams[rc_key] = [str(item) for item in candidates]
+    plt.rcParams["font.family"] = font_family
+    plt.rcParams["font.size"] = font_sizes["base"]
+    plt.rcParams["axes.titlesize"] = font_sizes["title"]
+    plt.rcParams["axes.labelsize"] = font_sizes["label"]
+    plt.rcParams["xtick.labelsize"] = font_sizes["tick"]
+    plt.rcParams["ytick.labelsize"] = font_sizes["tick"]
+    plt.rcParams["legend.fontsize"] = font_sizes["legend"]
+    return font_family
+
+
+def resolved_graphics_style(
+    paper_span: str,
+    journal_profile: dict[str, object] | None,
+) -> dict[str, float]:
+    defaults = {
+        "data_linewidth": 0.7 if paper_span == "single" else 0.9,
+        "model_linewidth": 0.9 if paper_span == "single" else 1.1,
+        "residual_linewidth": 0.6 if paper_span == "single" else 0.75,
+        "reference_linewidth": 0.7 if paper_span == "single" else 0.8,
+        "vline_linewidth": 0.8 if paper_span == "single" else 0.9,
+        "marker_size": 2.4 if paper_span == "single" else 2.8,
+        "residual_marker_size": 1.9 if paper_span == "single" else 2.2,
+    }
+    if not journal_profile:
+        return defaults
+    profile_styles = journal_profile.get("graphics_style_pt", {})
+    if not isinstance(profile_styles, dict):
+        return defaults
+    span_styles = profile_styles.get(paper_span, {})
+    if not isinstance(span_styles, dict):
+        return defaults
+    merged = dict(defaults)
+    for key, value in span_styles.items():
+        merged[str(key)] = float(value)
+    return merged
+
+
+def infer_band_wavelength_key(band_label: str) -> tuple[int, float, str]:
+    normalized = band_label.strip().lower()
+    explicit_wavelengths = {
+        "r062": 0.62,
+        "z087": 0.87,
+        "y106": 1.06,
+        "j129": 1.29,
+        "h158": 1.58,
+        "f184": 1.84,
+        "k213": 2.13,
+        "w146": 1.46,
+        "u": 0.36,
+        "g": 0.48,
+        "r": 0.62,
+        "i": 0.75,
+        "z": 0.87,
+        "y": 0.97,
+        "j": 1.25,
+        "h": 1.65,
+        "k": 2.20,
+    }
+    if normalized in explicit_wavelengths:
+        return (0, explicit_wavelengths[normalized], normalized)
+
+    match = re.search(r"(\d+(?:\.\d+)?)", normalized)
+    if match:
+        raw = float(match.group(1))
+        wavelength = raw / 100.0 if raw >= 10 else raw
+        return (1, wavelength, normalized)
+
+    return (2, float("inf"), normalized)
+
+
+def color_for_band_order(label: str, labels: list[str]) -> str:
+    spectral_palette = [
+        "#3B4CC0",
+        "#5E81F4",
+        "#2FB7C8",
+        "#2E8B57",
+        "#A4C73C",
+        "#F3C64D",
+        "#F28E2B",
+        "#D1495B",
+    ]
+    ordered = sorted(labels, key=infer_band_wavelength_key)
+    idx = ordered.index(label)
+    if len(ordered) == 1:
+        return spectral_palette[0]
+    scaled_idx = round(idx * (len(spectral_palette) - 1) / (len(ordered) - 1))
+    return spectral_palette[scaled_idx]
 
 
 def build_x_axis_context(
@@ -838,6 +1148,10 @@ def build_y_axis_label(
 def render_lightcurve(
     args: argparse.Namespace, df: pd.DataFrame | None = None
 ) -> tuple[plt.Figure, dict]:
+    journal_profiles = load_journal_profiles()
+    journal_profile = (
+        journal_profiles.get(args.journal_profile) if args.journal_profile else None
+    )
     y_kind = args.y_kind if args.y_kind else args.mode
     if args.y_kind and args.mode != "flux":
         mode_kind = args.mode
@@ -851,10 +1165,14 @@ def render_lightcurve(
     else:
         mode_for_render = "flux"
 
-    if args.tex:
+    uses_model_series = False
+    resolved_tex = (
+        bool(args.tex)
+        if args.tex is not None
+        else bool(journal_profile.get("tex_default", True) if journal_profile else True)
+    )
+    if resolved_tex:
         check_tex_dependencies()
-        plt.rcParams["text.usetex"] = True
-        plt.rcParams["font.family"] = "serif"
     if df is None:
         df = pd.read_csv(args.input)
     y_axis_label, used_manual_y_label = build_y_axis_label(
@@ -930,17 +1248,32 @@ def render_lightcurve(
     if args.model_x_col and args.model_x_col not in df.columns:
         raise SystemExit(f"Model x column not found: {args.model_x_col}")
     vlines = parse_vline_specs(args.vline)
+    has_residual_panel = bool(has_model or posterior_cols or has_initial_model)
+    figure_size, figure_geometry = publication_figure_geometry(
+        paper_span=args.paper_span,
+        has_residual_panel=has_residual_panel,
+        figure_width_in=args.figure_width_in,
+        figure_height_in=args.figure_height_in,
+        journal_profile=journal_profile,
+    )
+    font_sizes = resolved_font_sizes(args.paper_span, journal_profile)
+    graphics_style = resolved_graphics_style(args.paper_span, journal_profile)
+    resolved_font_family = apply_publication_rcparams(
+        font_sizes=font_sizes,
+        tex_enabled=resolved_tex,
+        journal_profile=journal_profile,
+    )
 
-    if has_model or posterior_cols or has_initial_model:
+    if has_residual_panel:
         fig, (ax, ax_resid) = plt.subplots(
             2,
             1,
-            figsize=(9, 6),
+            figsize=figure_size,
             sharex=True,
             gridspec_kw={"height_ratios": [3, 1]},
         )
     else:
-        fig, ax = plt.subplots(figsize=(9, 5))
+        fig, ax = plt.subplots(figsize=figure_size)
         ax_resid = None
 
     x_anchor_all = numeric_series(df, args.x_col)
@@ -962,8 +1295,8 @@ def render_lightcurve(
     model_x_all = numeric_series(df, args.model_x_col) if args.model_x_col else None
     model_x_plot_all = (model_x_all - x_axis_shift) if model_x_all is not None else None
 
-    palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
     markers = ["o", "s", "^", "D", "v", "P"]
+    band_labels = [str(b["label"]) for b in bands]
 
     band_states: list[dict[str, object]] = []
     for band in bands:
@@ -1079,14 +1412,25 @@ def render_lightcurve(
     series = []
     residual_y_label = residual_axis_label(y_kind, y_axis_label)
     if ax_resid is not None:
-        ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
+        ax_resid.axhline(
+            0.0,
+            color="black",
+            lw=graphics_style["reference_linewidth"],
+            alpha=0.7,
+        )
         ax_resid.set_ylabel(residual_y_label)
+        ax_resid.tick_params(direction="in")
 
     zoom_model_x = None
     zoom_model_y = None
     for idx, state in enumerate(band_states):
         label = str(state["label"])
-        color = palette[idx % len(palette)]
+        norm_meta = normalization_meta[label]
+        plotted_data_label = data_series_label(norm_meta, label)
+        plotted_model_label = best_fit_series_label(
+            args.best_fit_label, label, multi_band
+        )
+        color = color_for_band_order(label, band_labels)
         marker = markers[idx % len(markers)]
         scale = float(state["norm_scale"])
         offset = float(state["norm_offset"])
@@ -1105,10 +1449,13 @@ def render_lightcurve(
                 y_data_norm,
                 yerr=err_norm,
                 fmt=marker,
-                ms=3,
+                ms=graphics_style["marker_size"],
+                lw=graphics_style["data_linewidth"],
+                elinewidth=graphics_style["data_linewidth"],
+                markeredgewidth=graphics_style["data_linewidth"],
                 alpha=0.82,
                 color=color,
-                label=label,
+                label=plotted_data_label,
                 zorder=2,
             )
             data_line = container.lines[0]
@@ -1117,15 +1464,17 @@ def render_lightcurve(
                 x_data_plot,
                 y_data_norm,
                 marker,
-                ms=3,
+                ms=graphics_style["marker_size"],
+                lw=graphics_style["data_linewidth"],
+                markeredgewidth=graphics_style["data_linewidth"],
                 alpha=0.82,
                 color=color,
-                label=label,
+                label=plotted_data_label,
                 zorder=2,
             )
         series.append(
             {
-                "name": label,
+                "name": plotted_data_label,
                 "color": data_line.get_color(),
                 "marker": data_line.get_marker(),
                 "linestyle": data_line.get_linestyle(),
@@ -1137,22 +1486,21 @@ def render_lightcurve(
         if state["model_y"] is not None:
             model_y_norm = scale * np.asarray(state["model_y"]) + offset
             state["model_y_norm"] = model_y_norm
-            model_label = "Model" if (not multi_band and label.lower() == "data") else f"{label} Model"
             model_linestyle = "-" if not multi_band else ["-", "--", "-.", ":"][idx % 4]
             model_color = args.model_color if not multi_band else "#1f1f1f"
             (model_line,) = ax.plot(
                 np.asarray(state["model_x_plot"]),
                 model_y_norm,
                 model_linestyle,
-                lw=1.6,
+                lw=graphics_style["model_linewidth"],
                 color=model_color,
                 alpha=0.95,
-                label=model_label,
+                label=plotted_model_label,
                 zorder=8,
             )
             series.append(
                 {
-                    "name": model_label,
+                    "name": plotted_model_label,
                     "color": model_line.get_color(),
                     "marker": model_line.get_marker(),
                     "linestyle": model_line.get_linestyle(),
@@ -1178,7 +1526,10 @@ def render_lightcurve(
                             residuals[resid_err_mask],
                             yerr=err_norm[resid_err_mask],
                             fmt=marker,
-                            ms=2.4,
+                            ms=graphics_style["residual_marker_size"],
+                            lw=graphics_style["residual_linewidth"],
+                            elinewidth=graphics_style["residual_linewidth"],
+                            markeredgewidth=graphics_style["residual_linewidth"],
                             alpha=0.72,
                             color=color,
                             zorder=4,
@@ -1189,7 +1540,9 @@ def render_lightcurve(
                             x_data_plot[no_err_mask],
                             residuals[no_err_mask],
                             marker,
-                            ms=2.4,
+                            ms=graphics_style["residual_marker_size"],
+                            lw=graphics_style["residual_linewidth"],
+                            markeredgewidth=graphics_style["residual_linewidth"],
                             alpha=0.72,
                             color=color,
                             zorder=4,
@@ -1199,7 +1552,9 @@ def render_lightcurve(
                         x_data_plot[resid_mask],
                         residuals[resid_mask],
                         marker,
-                        ms=2.4,
+                        ms=graphics_style["residual_marker_size"],
+                        lw=graphics_style["residual_linewidth"],
+                        markeredgewidth=graphics_style["residual_linewidth"],
                         alpha=0.72,
                         color=color,
                         zorder=4,
@@ -1270,7 +1625,7 @@ def render_lightcurve(
                 posterior_x_plot,
                 posterior_y,
                 args.posterior_style,
-                lw=args.posterior_linewidth,
+                lw=min(args.posterior_linewidth, graphics_style["model_linewidth"]),
                 alpha=args.posterior_alpha,
                 color=posterior_base_color,
                 label=label,
@@ -1288,7 +1643,10 @@ def render_lightcurve(
                     x_data_plot[resid_mask],
                     resid[resid_mask],
                     args.posterior_style,
-                    lw=max(0.9, args.posterior_linewidth * 0.75),
+                    lw=max(
+                        graphics_style["residual_linewidth"],
+                        min(args.posterior_linewidth, graphics_style["model_linewidth"]) * 0.75,
+                    ),
                     alpha=min(0.7, args.posterior_alpha * 1.2),
                     color=posterior_base_color,
                     zorder=3,
@@ -1317,7 +1675,7 @@ def render_lightcurve(
                 init_x_plot,
                 init_y,
                 args.initial_model_style,
-                lw=1.5,
+                lw=graphics_style["model_linewidth"],
                 color=args.initial_model_color,
                 alpha=0.95,
                 label="Initial Model",
@@ -1342,21 +1700,30 @@ def render_lightcurve(
                     x_data_plot[init_resid_mask],
                     init_resid[init_resid_mask],
                     args.initial_model_style,
-                    lw=0.9,
+                    lw=graphics_style["residual_linewidth"],
                     color=args.initial_model_color,
                     alpha=0.6,
                     zorder=3.5,
                 )
 
     validation_warnings: list[str] = []
-    if not args.tex:
+    tex_policy = str(journal_profile.get("tex_policy", "preferred")) if journal_profile else "preferred"
+    if not resolved_tex and tex_policy == "preferred":
         validation_warnings.append(
             "TeX rendering is disabled (--no-tex). For journal publication, TeX text rendering is recommended."
+        )
+    if resolved_tex and tex_policy == "discouraged":
+        validation_warnings.append(
+            f"TeX rendering is enabled, but journal profile '{args.journal_profile}' prefers plain text rendering."
         )
     if args.title and args.title.strip():
         validation_warnings.append(
             "Title present. If title does not add clarifying information, prefer a detailed caption instead."
         )
+        if journal_profile and bool(journal_profile.get("forbid_figure_title", False)):
+            validation_warnings.append(
+                f"Title present, but journal profile '{args.journal_profile}' prefers titles in the caption, not the figure."
+            )
         legend_labels = [str(item["name"]) for item in series]
         axis_words = token_words(x_axis_label) | token_words(y_axis_label)
         legend_words = set()
@@ -1387,14 +1754,20 @@ def render_lightcurve(
     ax.set_title(args.title)
     ax.set_xlabel(x_axis_label if ax_resid is None else "")
     ax.set_ylabel(y_axis_label)
+    ax.tick_params(direction="in")
 
     # Standard astronomy convention for magnitude-based plots.
     if mode_for_render == "magnitude":
         ax.invert_yaxis()
 
-    ax.legend(loc="best", fontsize=9)
+    ax.legend(loc="best", fontsize=font_sizes["legend"])
     if vlines:
         trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
+        annotation_text_color = "black"
+        if not (journal_profile and bool(journal_profile.get("avoid_colored_text", False))):
+            annotation_text_color = None
+        for entry in vlines:
+            entry["text_color"] = annotation_text_color or str(entry["color"])
         for entry in vlines:
             x_val = float(entry["x"])
             x_val_plot = x_val - x_axis_shift
@@ -1402,7 +1775,12 @@ def render_lightcurve(
             linestyle = str(entry["linestyle"])
             label = str(entry["label"])
             ax.axvline(
-                x_val_plot, color=color, linestyle=linestyle, lw=1.1, alpha=0.9, zorder=9
+                x_val_plot,
+                color=color,
+                linestyle=linestyle,
+                lw=graphics_style["vline_linewidth"],
+                alpha=0.9,
+                zorder=9,
             )
             ax.text(
                 x_val_plot,
@@ -1412,8 +1790,8 @@ def render_lightcurve(
                 rotation=90,
                 va="top",
                 ha="right",
-                fontsize=8,
-                color=color,
+                fontsize=font_sizes["annotation"],
+                color=annotation_text_color or color,
                 zorder=10,
             )
             if ax_resid is not None:
@@ -1421,7 +1799,7 @@ def render_lightcurve(
                     x_val_plot,
                     color=color,
                     linestyle=linestyle,
-                    lw=0.9,
+                    lw=graphics_style["residual_linewidth"],
                     alpha=0.7,
                     zorder=5,
                 )
@@ -1466,6 +1844,13 @@ def render_lightcurve(
         ],
         "figure": {
             "title": args.title,
+            "journal_profile": args.journal_profile,
+            "paper_span": args.paper_span,
+            "figure_width_in": figure_geometry["width_in"],
+            "figure_height_in": figure_geometry["height_in"],
+            "font_family": resolved_font_family,
+            "font_sizes_pt": font_sizes,
+            "graphics_style_pt": graphics_style,
             "mode": mode_for_render,
             "y_kind": y_kind,
             "policy_profile": "strict",
@@ -1476,7 +1861,7 @@ def render_lightcurve(
             "normalization_reference_band": args.normalize_reference_band,
             "normalization_source": args.normalize_source,
             "normalization": normalization_meta,
-            "tex_enabled": bool(args.tex),
+            "tex_enabled": bool(resolved_tex),
             "has_residual_panel": bool(has_model or posterior_cols or has_initial_model),
             "has_initial_model_overlay": bool(has_initial_model),
             "posterior_overlay": bool(posterior_count > 0),

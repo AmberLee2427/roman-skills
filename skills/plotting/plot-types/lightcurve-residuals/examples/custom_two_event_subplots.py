@@ -19,7 +19,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 
 def load_roman_plot_module():
@@ -81,12 +81,16 @@ def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
         "magnitude",
         "--auto-x-zoom",
         "trim-baseline",
-        "--y-label",
-        "W146 Magnitude (mag)",
+        "--y-band",
+        "W146",
+        "--y-unit",
+        "mag",
         "--x-var",
         "Time",
         "--x-unit",
         "days",
+        "--title",
+        title,
     ]
     args = mod.parse_args(argv)
     fig, manifest = mod.render_lightcurve(args)
@@ -108,7 +112,6 @@ def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
 
 def compose_vertical_png(
     image_paths: list[Path],
-    panel_labels: list[str],
     out_png: Path,
     out_pdf: Path,
     dpi: int = 300,
@@ -120,27 +123,10 @@ def compose_vertical_png(
     total_height = sum(heights)
 
     canvas = Image.new("RGB", (max_width, total_height), color=(255, 255, 255))
-    draw = ImageDraw.Draw(canvas)
-    try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 44)
-    except OSError:
-        font = ImageFont.load_default()
     y = 0
-    for idx, img in enumerate(images):
+    for img in images:
         x = (max_width - img.width) // 2
         canvas.paste(img, (x, y))
-        if idx < len(panel_labels):
-            label = panel_labels[idx]
-            tx = x + 28
-            ty = y + 24
-            bbox = draw.textbbox((tx, ty), label, font=font)
-            pad = 10
-            draw.rectangle(
-                (bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad),
-                fill=(255, 255, 255),
-                outline=(120, 120, 120),
-            )
-            draw.text((tx, ty), label, fill=(30, 30, 30), font=font)
         y += img.height
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +161,6 @@ def main() -> None:
     combo_png = out_dir / "two_events_subplots.png"
     compose_vertical_png(
         [png_a, png_b],
-        ["Event A", "Event B"],
         combo_png,
         combo_pdf,
         dpi=300,
