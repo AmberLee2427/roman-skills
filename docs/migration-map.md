@@ -11,6 +11,9 @@
 - `skills/plotting/accessibility-checks`
 - `skills/photometry/aperture` (scaffold)
 - `skills/photometry/difference-imaging` (scaffold)
+- `skills/modeling/model-selection/evidence-bic`
+- `skills/modeling/microlensing/*` rung skills with default prior sections
+- `skills/modeling/retrieval` (scaffold)
 - `automation/hooks/*` for generic hook templates
 - `automation/gates/run_plot_gates.sh` for reusable style+accessibility checks
 

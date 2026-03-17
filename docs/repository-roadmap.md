@@ -42,18 +42,28 @@ Per-skill layout:
 5. `modeling/summary-statistics/convergence-tests`
 - Convergence diagnostics from chain outputs (`R-hat`, ESS proxy, threshold flags).
 
-6. `modeling/model-compare/microlensing`
+6. `modeling/model-selection/evidence-bic`
+- Complexity-retention gate using BIC evidence deltas.
+
+7. `modeling/retrieval` (scaffold)
+- Atmospheres-focused retrieval workflows (kept separate from evidence scoring).
+
+8. `modeling/model-compare/microlensing`
 - Deterministic model ranking (chi-square, reduced chi-square, AIC, BIC).
 - Microlensing implemented first as a branch, not the top-level taxonomy.
 
+9. `modeling/microlensing` ladder
+- `pspl -> fspl -> parallax -> 2s1l -> 1s2l -> lom -> xallarap -> 2s2l -> 1s3l`
+- Each rung carries default prior guidance and an evidence gate.
+
 ### `plotting/`
-7. `plotting/plot-types/lightcurve-residuals`
+10. `plotting/plot-types/lightcurve-residuals`
 - Lightcurve plus residual panel figure generation and export.
 
-8. `plotting/style-profiles`
+11. `plotting/style-profiles`
 - Journal-oriented style profile checks (`apj`, `mnras`, `aanda`).
 
-9. `plotting/accessibility-checks`
+12. `plotting/accessibility-checks`
 - Color/marker/grayscale distinguishability checks for figures.
 
 ## Prioritization
@@ -61,10 +71,11 @@ Implementation order can still be microlensing-first, but taxonomy remains domai
 
 Current implementation priority:
 1. `qc/timeseries`
-2. `modeling/model-compare/microlensing`
-3. `plotting/plot-types/lightcurve-residuals`
-4. `plotting/style-profiles`
-5. `plotting/accessibility-checks`
+2. `modeling/model-selection/evidence-bic`
+3. `modeling/model-compare/microlensing`
+4. `plotting/plot-types/lightcurve-residuals`
+5. `plotting/style-profiles`
+6. `plotting/accessibility-checks`
 
 ## Cross-Skill Contracts
 Every skill should return:
