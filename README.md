@@ -49,6 +49,7 @@ Skill repository for autonomous Roman Space Telescope analysis workflows.
 - Model-driven head/tail baseline trimming via `--auto-x-zoom trim-baseline`
 - Baseline definition for auto-zoom via scalar inference/override or `--baseline-col`
 - Manifest output for downstream quality gates
+- Importable API for controlled customization: `render_lightcurve(args)` returns `(fig, manifest)` before file write
 
 `skills/plotting/accessibility-checks/scripts/check_accessibility.py` uses:
 - `accessiplot.detection.color_detection` for CVD-aware color checks
@@ -60,3 +61,4 @@ Skill repository for autonomous Roman Space Telescope analysis workflows.
 
 ## Environment
 - Install dependencies: `pip install -r requirements.txt`
+- Run tests: `python -m unittest discover -s tests -p 'test_*.py'`

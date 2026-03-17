@@ -34,7 +34,7 @@ except ImportError as exc:
     ) from exc
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a Roman analysis plot")
     parser.add_argument("--input", required=True, help="Input CSV path")
     parser.add_argument("--output", required=True, help="Output file stem (no extension)")
@@ -285,7 +285,7 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Enable LaTeX text rendering (default: on). Use --no-tex to disable.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def check_tex_dependencies() -> None:
@@ -765,8 +765,9 @@ def fit_normalization(
     return 1.0, 0.0
 
 
-def main() -> None:
-    args = parse_args()
+def render_lightcurve(
+    args: argparse.Namespace, df: pd.DataFrame | None = None
+) -> tuple[plt.Figure, dict]:
     y_kind = args.y_kind if args.y_kind else args.mode
     if args.y_kind and args.mode != "flux":
         mode_kind = args.mode
@@ -784,7 +785,8 @@ def main() -> None:
         check_tex_dependencies()
         plt.rcParams["text.usetex"] = True
         plt.rcParams["font.family"] = "serif"
-    df = pd.read_csv(args.input)
+    if df is None:
+        df = pd.read_csv(args.input)
     bands = parse_band_specs(args, df, y_kind)
     band_y_kinds = sorted({str(b["y_kind"]) for b in bands})
     if len(band_y_kinds) != 1:
@@ -1351,11 +1353,8 @@ def main() -> None:
     fig.tight_layout()
 
     output_stem = Path(args.output)
-    output_stem.parent.mkdir(parents=True, exist_ok=True)
     pdf_path = output_stem.with_suffix(".pdf")
     png_path = output_stem.with_suffix(".png")
-    fig.savefig(pdf_path)
-    fig.savefig(png_path, dpi=300)
 
     manifest_path = (
         Path(args.manifest_output)
@@ -1374,6 +1373,8 @@ def main() -> None:
             "title": args.title,
             "mode": mode_for_render,
             "y_kind": y_kind,
+            "policy_profile": "strict",
+            "postprocess_customized": False,
             "multi_band": bool(multi_band),
             "band_labels": [str(b["label"]) for b in bands],
             "normalization_mode": args.normalize_mode,
@@ -1407,14 +1408,35 @@ def main() -> None:
         "provenance": {"input": str(Path(args.input).resolve())},
         "validation": {"required_columns": True, "warnings": validation_warnings},
     }
+    return fig, manifest
+
+
+def write_outputs(fig: plt.Figure, manifest: dict, args: argparse.Namespace) -> None:
+    output_stem = Path(args.output)
+    output_stem.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path = output_stem.with_suffix(".pdf")
+    png_path = output_stem.with_suffix(".png")
+    manifest_path = (
+        Path(args.manifest_output)
+        if args.manifest_output
+        else output_stem.with_suffix(".meta.json")
+    )
+    fig.savefig(pdf_path)
+    fig.savefig(png_path, dpi=300)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
-    for warning in validation_warnings:
+    for warning in manifest.get("validation", {}).get("warnings", []):
         print(f"Warning: {warning}")
     print(f"Saved: {pdf_path}")
     print(f"Saved: {png_path}")
     print(f"Saved: {manifest_path}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    fig, manifest = render_lightcurve(args)
+    write_outputs(fig, manifest, args)
 
 
 if __name__ == "__main__":
