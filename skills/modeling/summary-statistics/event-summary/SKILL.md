@@ -1,9 +1,9 @@
 ---
-name: "roman-event-summary"
-description: "Generate standardized Roman microlensing event summary products from local analysis tables, including key scalar metrics, model metadata, and reproducible provenance for downstream reports and plotting workflows."
+name: "roman-modeling-summary-statistics-event"
+description: "Generate standardized Roman event summary products from local analysis tables, including key scalar metrics, optional model metadata, and reproducible provenance for downstream workflows."
 ---
 
-# Roman Event Summary Skill
+# Roman Modeling Summary Statistics: Event Skill
 
 ## Purpose
 Build concise, machine-readable event summaries from analysis inputs so downstream agents can reason over standardized event metadata.

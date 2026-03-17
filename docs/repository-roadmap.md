@@ -1,19 +1,20 @@
 # Roman Skills Repository Roadmap
 
 ## Mission
-Build a focused, reusable skill library that helps coding agents perform reliable, publication-grade analysis on Nancy Grace Roman Space Telescope data, with microlensing as the first-class science case.
+Build a focused, reusable skill library that helps coding agents perform reliable, publication-grade analysis on Nancy Grace Roman Space Telescope data.
 
 ## Design Principles
-- Microlensing-first defaults, Roman-general architecture.
+- Domain-first hierarchy, science-case-specific leaves.
 - Small composable skills, not one mega-skill.
 - Deterministic outputs: explicit schemas, units, coordinate frames, and provenance.
 - Reproducibility: script-backed operations and clear quality gates.
-- Safe automation: read-only by default, explicit confirmation for destructive actions.
+- Agent-platform-neutral automation: no vendor-locked hook layout.
 
 ## Repository Layout
 - `skills/`: installable skill packages.
 - `docs/`: roadmap, conventions, and governance.
 - `research/`: source research and background material.
+- `automation/`: generic hook templates and gate runners.
 
 Per-skill layout:
 - `SKILL.md`: trigger conditions, workflow, constraints.
@@ -21,38 +22,49 @@ Per-skill layout:
 - `scripts/`: executable helpers used by the skill.
 - `assets/`: templates and style files.
 
-## Planned Skill Collection
+## Skill Hierarchy
 
-### Phase 1: Core analysis foundation
-1. `roman-plotting` (first skill)
-- Generate publication-quality figures for Roman and microlensing workflows.
-- Enforce style conventions, panel structure, metadata, and export standards.
+### `qc/`
+1. `qc/timeseries`
+- Validate time-series columns, cadence gaps, uncertainty sanity, and outliers.
 
-2. `roman-timeseries-qc`
-- Validate time-series columns, cadence gaps, error model sanity, and outliers.
-- Emit machine-readable QC report before fitting/plotting.
+### `photometry/`
+2. `photometry/aperture` (scaffold)
+- Aperture-photometry extraction and table generation branch.
 
-3. `roman-event-summary`
-- Produce standardized event summary tables with units and uncertainties.
-- Include provenance and reproducible source query references.
+3. `photometry/difference-imaging` (scaffold)
+- Difference-imaging photometry branch for variable/transient extraction.
 
-### Phase 2: Microlensing modeling support
-4. `roman-microlensing-model-compare`
-- Compare 1L1S vs 2L1S (and optional parallax/finite-source variants).
-- Output fit diagnostics and model-selection summary.
+### `modeling/`
+4. `modeling/summary-statistics/event-summary`
+- Standardized event summary metrics and provenance.
 
-5. `roman-caustic-visualization`
-- Plot caustics, source trajectories, and annotated anomaly epochs.
+5. `modeling/summary-statistics/convergence-tests`
+- Convergence diagnostics from chain outputs (`R-hat`, ESS proxy, threshold flags).
 
-6. `roman-posterior-diagnostics`
-- Generate corner plots, trace diagnostics, and parameter covariance summaries.
+6. `modeling/model-compare/microlensing`
+- Deterministic model ranking (chi-square, reduced chi-square, AIC, BIC).
+- Microlensing implemented first as a branch, not the top-level taxonomy.
 
-### Phase 3: Physical inference and publication prep
-7. `roman-physical-inference`
-- Build mass-distance and related physical-parameter visualizations.
+### `plotting/`
+7. `plotting/plot-types/lightcurve-residuals`
+- Lightcurve plus residual panel figure generation and export.
 
-8. `roman-paper-figures`
-- Convert analysis outputs into journal-ready figure packages and manifests.
+8. `plotting/style-profiles`
+- Journal-oriented style profile checks (`apj`, `mnras`, `aanda`).
+
+9. `plotting/accessibility-checks`
+- Color/marker/grayscale distinguishability checks for figures.
+
+## Prioritization
+Implementation order can still be microlensing-first, but taxonomy remains domain-first.
+
+Current implementation priority:
+1. `qc/timeseries`
+2. `modeling/model-compare/microlensing`
+3. `plotting/plot-types/lightcurve-residuals`
+4. `plotting/style-profiles`
+5. `plotting/accessibility-checks`
 
 ## Cross-Skill Contracts
 Every skill should return:
@@ -62,7 +74,13 @@ Every skill should return:
 - `provenance`: input dataset identifiers, source paths, timestamp
 - `validation`: key checks performed and pass/fail outcomes
 
-## First Milestone (Now)
-- Scaffold repository architecture.
-- Implement `roman-plotting` skill package with microlensing-first playbook.
-- Add reusable plotting script entrypoint and style template.
+## Automation and Hooks
+Hook orchestration is intentionally platform-neutral:
+- Hook templates live in `automation/hooks/`.
+- Quality gates live in `automation/gates/`.
+- Agents can map local runner events (for example `post-plot`) to these scripts.
+
+## Current Milestone
+- Refactor from flat skill list to hierarchical domain structure.
+- Keep microlensing as the first implemented modeling branch.
+- Add generic plotting quality gates for style and accessibility.

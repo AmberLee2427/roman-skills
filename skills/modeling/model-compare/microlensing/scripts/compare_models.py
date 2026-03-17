@@ -71,6 +71,7 @@ def evidence_label(delta_bic: float) -> str:
 
 def main() -> None:
     args = parse_args()
+    out = Path(args.output)
     model_specs = [parse_model_spec(raw) for raw in args.model]
 
     if len(model_specs) < 2:
@@ -84,13 +85,13 @@ def main() -> None:
         report = {
             "status": "error",
             "summary": f"Missing required columns: {', '.join(missing_cols)}",
+            "artifacts": [str(out.resolve())],
             "validation": {"required_columns": False},
             "provenance": {
                 "input": str(Path(args.input).resolve()),
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         }
-        out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2))
         raise SystemExit(2)
@@ -105,7 +106,23 @@ def main() -> None:
     valid = valid[valid[args.err_col] > 0]
 
     if valid.empty:
-        raise SystemExit("No valid rows after finite-value and uncertainty filtering")
+        report = {
+            "status": "error",
+            "summary": "No valid rows after finite-value and uncertainty filtering",
+            "artifacts": [str(out.resolve())],
+            "validation": {
+                "required_columns": True,
+                "finite_required_values": False,
+                "positive_uncertainties": False,
+            },
+            "provenance": {
+                "input": str(Path(args.input).resolve()),
+                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2))
+        raise SystemExit(2)
 
     n = len(valid)
     y = valid[args.value_col].to_numpy()
@@ -159,6 +176,7 @@ def main() -> None:
     report = {
         "status": status,
         "summary": summary if not warnings else f"{summary}; " + "; ".join(warnings),
+        "artifacts": [str(out.resolve())],
         "preferred_model": best_name,
         "ranking_metric": "bic",
         "models": rows,
@@ -179,7 +197,6 @@ def main() -> None:
         },
     }
 
-    out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
     print(f"Saved model comparison: {out}")

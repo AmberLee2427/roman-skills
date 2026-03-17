@@ -1,5 +1,5 @@
 ---
-name: "roman-microlensing-model-compare"
+name: "roman-modeling-model-compare-microlensing"
 description: "Compare microlensing fit models (for example 1L1S vs 2L1S) on a shared Roman time-series dataset using deterministic metrics (chi-square, reduced chi-square, AIC, BIC), and return ranked model diagnostics with explicit evidence deltas."
 ---
 

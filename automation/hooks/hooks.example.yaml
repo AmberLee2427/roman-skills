@@ -1,0 +1,10 @@
+version: 1
+hooks:
+  - event: post-plot
+    run:
+      - "python skills/plotting/accessibility-checks/scripts/check_accessibility.py --metadata ${PLOT_METADATA} --output ${GATE_DIR}/accessibility.json"
+      - "python skills/plotting/style-profiles/scripts/check_style_profile.py --metadata ${PLOT_METADATA} --profile ${JOURNAL_PROFILE} --output ${GATE_DIR}/style.json"
+
+  - event: pre-publication-bundle
+    run:
+      - "bash automation/gates/run_plot_gates.sh ${PLOT_METADATA} ${JOURNAL_PROFILE} ${GATE_DIR}"

@@ -2,7 +2,7 @@
 """Minimal Roman plotting utility for microlensing-first workflows.
 
 Usage example:
-  python skills/roman-plotting/scripts/roman_plot.py \\
+  python skills/plotting/plot-types/lightcurve-residuals/scripts/roman_plot.py \\
     --input data/lightcurve.csv \\
     --output out/event123_lightcurve \\
     --x-col time --y-col magnitude --err-col magnitude_err \\
@@ -12,6 +12,7 @@ Usage example:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -49,6 +50,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--y-label", default="Value", help="Y-axis label")
     parser.add_argument("--title", default="Roman Plot", help="Figure title")
+    parser.add_argument(
+        "--manifest-output",
+        help="Optional JSON manifest path. Default: <output>.meta.json",
+    )
     parser.add_argument(
         "--tex",
         action=argparse.BooleanOptionalAction,
@@ -115,14 +120,35 @@ def main() -> None:
     x = df[args.x_col]
     y = df[args.y_col]
 
+    series = []
     if args.err_col and args.err_col in df.columns:
-        ax.errorbar(x, y, yerr=df[args.err_col], fmt="o", ms=3, alpha=0.8, label="Data")
+        container = ax.errorbar(
+            x, y, yerr=df[args.err_col], fmt="o", ms=3, alpha=0.8, label="Data"
+        )
+        data_line = container.lines[0]
     else:
-        ax.plot(x, y, "o", ms=3, alpha=0.8, label="Data")
+        (data_line,) = ax.plot(x, y, "o", ms=3, alpha=0.8, label="Data")
+
+    series.append(
+        {
+            "name": "Data",
+            "color": data_line.get_color(),
+            "marker": data_line.get_marker(),
+            "linestyle": data_line.get_linestyle(),
+        }
+    )
 
     if has_model:
         model_y = df[args.model_col]
-        ax.plot(x, model_y, "-", lw=1.6, label="Model")
+        (model_line,) = ax.plot(x, model_y, "-", lw=1.6, label="Model")
+        series.append(
+            {
+                "name": "Model",
+                "color": model_line.get_color(),
+                "marker": model_line.get_marker(),
+                "linestyle": model_line.get_linestyle(),
+            }
+        )
         residuals = y - model_y
         ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
         ax_resid.plot(x, residuals, "o", ms=2.5, alpha=0.8)
@@ -145,10 +171,47 @@ def main() -> None:
 
     output_stem = Path(args.output)
     output_stem.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(f"{output_stem}.pdf")
-    fig.savefig(f"{output_stem}.png", dpi=300)
-    print(f"Saved: {output_stem}.pdf")
-    print(f"Saved: {output_stem}.png")
+    pdf_path = output_stem.with_suffix(".pdf")
+    png_path = output_stem.with_suffix(".png")
+    fig.savefig(pdf_path)
+    fig.savefig(png_path, dpi=300)
+
+    manifest_path = (
+        Path(args.manifest_output)
+        if args.manifest_output
+        else output_stem.with_suffix(".meta.json")
+    )
+    manifest = {
+        "status": "ok",
+        "summary": "Generated lightcurve figure",
+        "artifacts": [
+            str(pdf_path.resolve()),
+            str(png_path.resolve()),
+            str(manifest_path.resolve()),
+        ],
+        "figure": {
+            "title": args.title,
+            "mode": args.mode,
+            "tex_enabled": bool(args.tex),
+            "has_residual_panel": bool(has_model),
+            "labels": {"x": args.x_label, "y": args.y_label},
+            "labels_include_units": ("(" in args.x_label and ")" in args.x_label)
+            and ("(" in args.y_label and ")" in args.y_label),
+        },
+        "exports": [
+            {"format": "pdf", "path": str(pdf_path.resolve())},
+            {"format": "png", "path": str(png_path.resolve()), "dpi": 300},
+        ],
+        "series": series,
+        "provenance": {"input": str(Path(args.input).resolve())},
+        "validation": {"required_columns": True},
+    }
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    print(f"Saved: {pdf_path}")
+    print(f"Saved: {png_path}")
+    print(f"Saved: {manifest_path}")
 
 
 if __name__ == "__main__":

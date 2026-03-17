@@ -1,6 +1,6 @@
 ---
-name: "roman-timeseries-qc"
-description: "Validate Roman time-series data before modeling or plotting. Use when checking required columns, missing data, cadence gaps, uncertainty sanity, outliers, and basic per-observatory consistency for microlensing analysis inputs."
+name: "roman-qc-timeseries"
+description: "Validate Roman time-series data before modeling or plotting. Use when checking required columns, missing data, cadence gaps, uncertainty sanity, outliers, and per-observatory consistency."
 ---
 
 # Roman Time-Series QC Skill

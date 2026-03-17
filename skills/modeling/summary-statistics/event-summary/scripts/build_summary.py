@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    out = Path(args.output)
     df = pd.read_csv(args.input)
 
     required = [args.time_col, args.value_col, args.err_col]
@@ -44,6 +45,7 @@ def main() -> None:
         report = {
             "status": "error",
             "summary": f"Missing required columns: {', '.join(missing)}",
+            "artifacts": [str(out.resolve())],
             "event": {"event_id": event_id, "value_mode": args.value_mode},
             "validation": {"required_columns": False},
             "provenance": {
@@ -51,7 +53,6 @@ def main() -> None:
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         }
-        out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2))
         raise SystemExit(2)
@@ -63,6 +64,7 @@ def main() -> None:
         report = {
             "status": "error",
             "summary": "No valid numeric rows after parsing",
+            "artifacts": [str(out.resolve())],
             "event": {"event_id": event_id, "value_mode": args.value_mode},
             "validation": {"required_columns": True, "has_valid_rows": False},
             "provenance": {
@@ -70,7 +72,6 @@ def main() -> None:
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         }
-        out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2))
         raise SystemExit(2)
@@ -94,6 +95,7 @@ def main() -> None:
     report = {
         "status": "ok",
         "summary": f"Event {event_id}: {len(valid)} valid points, peak at t={t[peak_idx]:.6g}",
+        "artifacts": [str(out.resolve())],
         "event": {
             "event_id": event_id,
             "value_mode": args.value_mode,
@@ -123,7 +125,6 @@ def main() -> None:
         },
     }
 
-    out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
     print(f"Saved event summary: {out}")

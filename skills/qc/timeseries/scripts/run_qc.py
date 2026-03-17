@@ -40,6 +40,7 @@ def robust_z(values: np.ndarray) -> np.ndarray:
 
 def main() -> None:
     args = parse_args()
+    out = Path(args.output)
     df = pd.read_csv(args.input)
 
     required = [args.time_col, args.value_col, args.err_col]
@@ -48,13 +49,13 @@ def main() -> None:
         report = {
             "status": "error",
             "summary": f"Missing required columns: {', '.join(missing_cols)}",
+            "artifacts": [str(Path(args.output).resolve())],
             "validation": {"required_columns": False},
             "provenance": {
                 "input": str(Path(args.input).resolve()),
                 "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             },
         }
-        out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2))
         raise SystemExit(2)
@@ -139,6 +140,7 @@ def main() -> None:
     report = {
         "status": status,
         "summary": summary,
+        "artifacts": [str(out.resolve())],
         "validation": checks,
         "metrics": {
             "rows": int(n_rows),
@@ -159,7 +161,6 @@ def main() -> None:
         },
     }
 
-    out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2))
     print(f"Saved QC report: {out}")

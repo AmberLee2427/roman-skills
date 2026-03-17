@@ -1,27 +1,26 @@
 ---
-name: "roman-plotting"
-description: "Generate publication-quality Roman and microlensing figures from local analysis outputs. Use when the task requires time-series/event plotting, residual panels, caustic geometry views, posterior/corner visualizations, or journal-ready export settings with consistent scientific conventions."
+name: "roman-plotting-plot-types-lightcurve-residuals"
+description: "Generate Roman lightcurve figures with optional model residual panels from local analysis outputs, with publication-ready labels and export conventions."
 ---
 
-# Roman Plotting Skill
+# Roman Plotting Plot Type: Lightcurve + Residuals
 
 ## Purpose
 Provide a repeatable plotting workflow for Roman data analysis, prioritizing microlensing diagnostics and publication-grade figure quality.
 
 ## Use This Skill When
-- The user requests any Roman/microlensing figure.
-- Existing plots need standardization (axes, labels, units, legend, export format).
-- You need residual panels, anomaly zooms, or posterior diagnostic figures.
+- The user requests a Roman lightcurve figure, with or without residual panel.
+- Existing lightcurve plots need standardized axes, labels, units, legends, and exports.
+- You need a deterministic plotting entrypoint for publication figures.
 
 ## Inputs You Should Confirm
 - Data source path(s).
-- Plot type (lightcurve, residuals, caustic, corner, mass-distance, CMD, astrometry).
 - Output directory and filename stem.
 - Target use: exploratory notebook vs publication-ready export.
 
 ## Workflow
 1. Inspect data schema and verify required columns.
-2. Select template from `references/plot-types.md`.
+2. Confirm lightcurve/residual layout expectations from `references/plot-types.md`.
 3. Apply style and labeling rules from `references/style-rules.md`.
 4. Generate figure via `scripts/roman_plot.py` (or equivalent local script).
 5. Export both editable and publication formats where applicable.
