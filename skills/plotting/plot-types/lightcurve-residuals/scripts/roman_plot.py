@@ -6,7 +6,8 @@ Usage example:
     --input data/lightcurve.csv \\
     --output out/event123_lightcurve \\
     --x-col time --y-col magnitude --err-col magnitude_err \\
-    --model-col model_magnitude --mode magnitude
+    --model-col model_magnitude --mode magnitude \\
+    --posterior-model-col sample_model_001 --posterior-model-col sample_model_002
 """
 
 from __future__ import annotations
@@ -37,6 +38,53 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--y-col", required=True, help="Y-axis column name")
     parser.add_argument("--err-col", help="Error column name")
     parser.add_argument("--model-col", help="Model column name for residual panel")
+    parser.add_argument(
+        "--model-color",
+        default="#e69f00",
+        help="Line color for best-fit model overlay",
+    )
+    parser.add_argument(
+        "--initial-model-col",
+        help="Optional initial/pre-optimization model column to overlay",
+    )
+    parser.add_argument(
+        "--initial-model-style",
+        default="--",
+        help="Line style for initial model overlay",
+    )
+    parser.add_argument(
+        "--initial-model-color",
+        default="#000000",
+        help="Line color for initial model overlay",
+    )
+    parser.add_argument(
+        "--posterior-model-col",
+        action="append",
+        default=[],
+        help="Posterior sample model column to overlay (repeat for multiple columns)",
+    )
+    parser.add_argument(
+        "--posterior-alpha",
+        type=float,
+        default=0.22,
+        help="Alpha for posterior sample overlays",
+    )
+    parser.add_argument(
+        "--posterior-linewidth",
+        type=float,
+        default=1.0,
+        help="Line width for posterior sample overlays",
+    )
+    parser.add_argument(
+        "--posterior-style",
+        default=":",
+        help="Line style for posterior sample overlays",
+    )
+    parser.add_argument(
+        "--posterior-color",
+        default="#3a3a3a",
+        help="Line color for posterior sample overlays",
+    )
     parser.add_argument(
         "--mode",
         choices=["flux", "magnitude"],
@@ -104,8 +152,19 @@ def main() -> None:
     has_model = bool(args.model_col and args.model_col in df.columns)
     if args.model_col and not has_model:
         raise SystemExit(f"Model column not found: {args.model_col}")
+    has_initial_model = bool(
+        args.initial_model_col and args.initial_model_col in df.columns
+    )
+    if args.initial_model_col and not has_initial_model:
+        raise SystemExit(f"Initial model column not found: {args.initial_model_col}")
+    posterior_cols = [c for c in args.posterior_model_col]
+    missing_posterior = [c for c in posterior_cols if c not in df.columns]
+    if missing_posterior:
+        raise SystemExit(
+            f"Posterior model column(s) not found: {', '.join(missing_posterior)}"
+        )
 
-    if has_model:
+    if has_model or posterior_cols or has_initial_model:
         fig, (ax, ax_resid) = plt.subplots(
             2,
             1,
@@ -135,24 +194,101 @@ def main() -> None:
             "color": data_line.get_color(),
             "marker": data_line.get_marker(),
             "linestyle": data_line.get_linestyle(),
+            "alpha": 0.8,
+            "linewidth": float(data_line.get_linewidth()),
         }
     )
 
     if has_model:
         model_y = df[args.model_col]
-        (model_line,) = ax.plot(x, model_y, "-", lw=1.6, label="Model")
+        (model_line,) = ax.plot(
+            x, model_y, "-", lw=1.6, color=args.model_color, label="Model"
+        )
         series.append(
             {
                 "name": "Model",
                 "color": model_line.get_color(),
                 "marker": model_line.get_marker(),
                 "linestyle": model_line.get_linestyle(),
+                "alpha": 1.0,
+                "linewidth": float(model_line.get_linewidth()),
             }
         )
         residuals = y - model_y
         ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
         ax_resid.plot(x, residuals, "o", ms=2.5, alpha=0.8)
         ax_resid.set_ylabel("Residual")
+    elif posterior_cols:
+        ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
+        ax_resid.set_ylabel("Residual")
+
+    posterior_count = 0
+    posterior_base_color = args.posterior_color
+    for idx, col in enumerate(posterior_cols):
+        label = "Posterior Samples" if idx == 0 else None
+        (line,) = ax.plot(
+            x,
+            df[col],
+            args.posterior_style,
+            lw=args.posterior_linewidth,
+            alpha=args.posterior_alpha,
+            color=posterior_base_color,
+            label=label,
+        )
+        posterior_count += 1
+        if has_model:
+            resid = y - df[col]
+            ax_resid.plot(
+                x,
+                resid,
+                args.posterior_style,
+                lw=0.5,
+                alpha=min(0.25, args.posterior_alpha * 1.5),
+                color=posterior_base_color,
+            )
+        if idx == 0:
+            series.append(
+                {
+                    "name": "Posterior Samples",
+                    "color": line.get_color(),
+                    "marker": line.get_marker(),
+                    "linestyle": line.get_linestyle(),
+                    "alpha": float(args.posterior_alpha),
+                    "linewidth": float(args.posterior_linewidth),
+                }
+            )
+
+    if has_initial_model:
+        init_y = df[args.initial_model_col]
+        (init_line,) = ax.plot(
+            x,
+            init_y,
+            args.initial_model_style,
+            lw=1.3,
+            color=args.initial_model_color,
+            alpha=0.95,
+            label="Initial Model",
+        )
+        series.append(
+            {
+                "name": "Initial Model",
+                "color": init_line.get_color(),
+                "marker": init_line.get_marker(),
+                "linestyle": init_line.get_linestyle(),
+                "alpha": 0.95,
+                "linewidth": float(init_line.get_linewidth()),
+            }
+        )
+        if ax_resid is not None:
+            init_resid = y - init_y
+            ax_resid.plot(
+                x,
+                init_resid,
+                args.initial_model_style,
+                lw=0.9,
+                color=args.initial_model_color,
+                alpha=0.6,
+            )
 
     ax.set_title(args.title)
     ax.set_xlabel(args.x_label if not has_model else "")
@@ -193,7 +329,10 @@ def main() -> None:
             "title": args.title,
             "mode": args.mode,
             "tex_enabled": bool(args.tex),
-            "has_residual_panel": bool(has_model),
+            "has_residual_panel": bool(has_model or posterior_cols or has_initial_model),
+            "has_initial_model_overlay": bool(has_initial_model),
+            "posterior_overlay": bool(posterior_count > 0),
+            "posterior_sample_count": int(posterior_count),
             "labels": {"x": args.x_label, "y": args.y_label},
             "labels_include_units": ("(" in args.x_label and ")" in args.x_label)
             and ("(" in args.y_label and ")" in args.y_label),

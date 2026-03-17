@@ -1,3 +1,6 @@
 matplotlib
 numpy
 pandas
+colorthief
+colorspacious
+git+https://github.com/charlesdrotar/accessiplot.git

@@ -12,11 +12,13 @@ Provide a repeatable plotting workflow for Roman data analysis, prioritizing mic
 - The user requests a Roman lightcurve figure, with or without residual panel.
 - Existing lightcurve plots need standardized axes, labels, units, legends, and exports.
 - You need a deterministic plotting entrypoint for publication figures.
+- Optional: posterior sample trajectories should be overlaid as transparent model curves.
 
 ## Inputs You Should Confirm
 - Data source path(s).
 - Output directory and filename stem.
 - Target use: exploratory notebook vs publication-ready export.
+- Optional posterior sample model columns (only for posterior-sampling workflows).
 
 ## Workflow
 1. Inspect data schema and verify required columns.

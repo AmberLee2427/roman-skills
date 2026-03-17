@@ -91,6 +91,10 @@ Hook orchestration is intentionally platform-neutral:
 - Quality gates live in `automation/gates/`.
 - Agents can map local runner events (for example `post-plot`) to these scripts.
 
+Accessibility dependency note:
+- `plotting/accessibility-checks` uses `accessiplot` for CVD-aware color checks.
+- Install via `pip install -r requirements.txt` (includes Git source for `accessiplot`).
+
 ## Current Milestone
 - Refactor from flat skill list to hierarchical domain structure.
 - Keep microlensing as the first implemented modeling branch.

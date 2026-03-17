@@ -18,10 +18,15 @@ Provide an automated accessibility gate for Roman figures before publication pac
 - Output report path.
 
 ## Workflow
-1. Parse series definitions from metadata.
-2. Check pairwise distinguishability using marker and color distance rules.
-3. Estimate grayscale separability from luminance distance.
+1. Parse exports and series definitions from metadata.
+2. Use `accessiplot.detection.color_detection` on the PNG export for CVD-aware color checks.
+3. Run supplemental line-visibility and marker-style checks from metadata.
 4. Emit JSON report with explicit checks and caveats.
+
+## Dependencies
+- Python package: `accessiplot`
+- Install all project deps: `pip install -r requirements.txt`
+- Note: `accessiplot` requires `colorthief` and `colorspacious` in this environment; both are included in `requirements.txt`.
 
 ## Output Contract
 Return:
