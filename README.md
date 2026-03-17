@@ -1,44 +1,53 @@
 # roman-skills
 
-Skill repository for autonomous, high-quality Roman Space Telescope analysis workflows, with a microlensing-first focus.
+Skill repository for autonomous Roman Space Telescope analysis workflows.
 
 ## Current Status
 - Repository plan: `docs/repository-roadmap.md`
-- Implemented skills:
-  - `skills/roman-plotting/`
-  - `skills/roman-timeseries-qc/`
-  - `skills/roman-event-summary/`
-  - `skills/roman-microlensing-model-compare/`
+- Hierarchy and migration map: `docs/skill-hierarchy.md`, `docs/migration-map.md`
 
 ## Repository Structure
-- `skills/`: skill packages (`SKILL.md`, references, scripts, assets)
+- `skills/`: skill packages (`SKILL.md`, `references/`, `scripts/`, `assets/`)
 - `docs/`: roadmap and repository-level conventions
 - `research/`: source research notes
+- `automation/`: platform-neutral hook templates and gate runners
 
-## Core Skills
-- `roman-plotting` at `skills/roman-plotting/`
-- `roman-timeseries-qc` at `skills/roman-timeseries-qc/`
-- `roman-event-summary` at `skills/roman-event-summary/`
-- `roman-microlensing-model-compare` at `skills/roman-microlensing-model-compare/`
+## Skill Hierarchy
+- `skills/qc/timeseries`
+- `skills/photometry/aperture` (scaffold)
+- `skills/photometry/difference-imaging` (scaffold)
+- `skills/modeling/summary-statistics/event-summary`
+- `skills/modeling/summary-statistics/convergence-tests`
+- `skills/modeling/model-selection/evidence-bic`
+- `skills/modeling/model-compare/microlensing`
+- `skills/modeling/retrieval` (scaffold)
+- `skills/modeling/microlensing/pspl`
+- `skills/modeling/microlensing/fspl`
+- `skills/modeling/microlensing/parallax`
+- `skills/modeling/microlensing/2s1l`
+- `skills/modeling/microlensing/1s2l`
+- `skills/modeling/microlensing/lom`
+- `skills/modeling/microlensing/xallarap`
+- `skills/modeling/microlensing/2s2l`
+- `skills/modeling/microlensing/1s3l`
+- `skills/plotting/plot-types/lightcurve-residuals`
+- `skills/plotting/style-profiles`
+- `skills/plotting/accessibility-checks`
 
-`roman-plotting` provides:
-- Microlensing-first plotting workflow
-- Publication-oriented style and QA checklists
-- Script scaffold for lightcurve + residual plotting
-- TeX text rendering enabled by default (`--no-tex` opt-out)
+## Plotting and Accessibility
+`skills/plotting/plot-types/lightcurve-residuals/scripts/roman_plot.py` supports:
+- Data + best-fit model + optional initial model
+- Optional transparent posterior sample overlays
+- Residual panel generation
+- Manifest output for downstream quality gates
 
-Key files:
-- `skills/roman-plotting/SKILL.md`
-- `skills/roman-plotting/references/plot-types.md`
-- `skills/roman-plotting/references/style-rules.md`
-- `skills/roman-plotting/references/qa-checklist.md`
-- `skills/roman-plotting/scripts/roman_plot.py`
+`skills/plotting/accessibility-checks/scripts/check_accessibility.py` uses:
+- `accessiplot.detection.color_detection` for CVD-aware color checks
+- Supplemental marker/style and line-visibility checks from manifest metadata
 
-## Next Skills (Planned)
-1. `roman-caustic-visualization`
-2. `roman-posterior-diagnostics`
-3. `roman-physical-inference`
-4. `roman-paper-figures`
+## Automation
+- Generic hook templates: `automation/hooks/`
+- Gate runner: `automation/gates/run_plot_gates.sh`
 
 ## Environment
 - Install dependencies: `pip install -r requirements.txt`
