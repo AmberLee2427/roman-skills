@@ -13,6 +13,7 @@ Provide a repeatable plotting workflow for Roman data analysis, prioritizing mic
 - Existing lightcurve plots need standardized axes, labels, units, legends, and exports.
 - You need a deterministic plotting entrypoint for publication figures.
 - Optional: posterior sample trajectories should be overlaid as transparent model curves.
+- Optional: multiband lightcurves must be aligned to a declared reference band.
 
 ## Inputs You Should Confirm
 - Data source path(s).
@@ -36,6 +37,7 @@ Provide a repeatable plotting workflow for Roman data analysis, prioritizing mic
 - Distinguish observatories by marker shape + color.
 - Overlay baseline model (e.g., 1L1S dashed) when comparing to planetary model.
 - Include anomaly zoom inset for short-timescale perturbations when present.
+- For long baselines, allow model-driven head/tail baseline trimming with explicit threshold metadata.
 
 ## Output Contract
 Return:

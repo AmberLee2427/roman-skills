@@ -40,6 +40,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True, help="Output file stem (no extension)")
     parser.add_argument("--x-col", required=True, help="X-axis column name")
     parser.add_argument("--y-col", required=True, help="Y-axis column name")
+    parser.add_argument(
+        "--band-label",
+        default="Data",
+        help="Legend label for the primary dataset (x/y/err/model columns).",
+    )
+    parser.add_argument(
+        "--band-spec",
+        action="append",
+        default=[],
+        help=(
+            "Additional band definition (repeatable): "
+            "'label,y_col[,err_col[,x_col[,model_col[,y_kind]]]]'. "
+            "Use empty fields to inherit defaults."
+        ),
+    )
     parser.add_argument("--err-col", help="Error column name")
     parser.add_argument("--model-col", help="Model column name for residual panel")
     parser.add_argument(
@@ -98,10 +113,21 @@ def parse_args() -> argparse.Namespace:
         help="Line color for posterior sample overlays",
     )
     parser.add_argument(
+        "--y-kind",
+        choices=["magnification", "flux", "magnitude", "delta_flux"],
+        help=(
+            "Physical meaning of y-values. Required for strict scientific semantics; "
+            "if omitted, inferred from --mode for backward compatibility."
+        ),
+    )
+    parser.add_argument(
         "--mode",
         choices=["flux", "magnitude"],
         default="flux",
-        help="Interpretation of y-axis values",
+        help=(
+            "Deprecated shorthand for y-axis interpretation. "
+            "Prefer --y-kind."
+        ),
     )
     parser.add_argument(
         "--x-label",
@@ -142,6 +168,116 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--manifest-output",
         help="Optional JSON manifest path. Default: <output>.meta.json",
+    )
+    parser.add_argument(
+        "--baseline-mode",
+        choices=["scalar", "column"],
+        default="scalar",
+        help=(
+            "How to define baseline for model-driven x-zoom. "
+            "'scalar' uses --baseline-level or inferred scalar baseline; "
+            "'column' uses --baseline-col."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-level",
+        type=float,
+        help="Explicit scalar baseline level.",
+    )
+    parser.add_argument(
+        "--baseline-col",
+        help=(
+            "Column containing time-dependent baseline values (same cadence as model x/y)."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-method",
+        choices=["tail-median", "global-median", "quantile-high", "quantile-low"],
+        default="tail-median",
+        help="Method to infer scalar baseline when --baseline-level is not provided.",
+    )
+    parser.add_argument(
+        "--baseline-tail-frac",
+        type=float,
+        default=0.2,
+        help=(
+            "Fraction from each time edge used by tail-median baseline inference "
+            "(0 < frac <= 0.5)."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-quantile",
+        type=float,
+        default=0.9,
+        help=(
+            "Quantile used for quantile-high/quantile-low scalar baseline inference "
+            "(0 < q < 1)."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-consistency-frac",
+        type=float,
+        default=0.2,
+        help=(
+            "For tail-median inference, fail if head vs tail baseline medians differ "
+            "by more than this fraction of model dynamic range."
+        ),
+    )
+    parser.add_argument(
+        "--auto-x-zoom",
+        choices=["none", "trim-baseline"],
+        default="none",
+        help=(
+            "Automatic x-windowing mode. 'trim-baseline' crops only leading/trailing "
+            "baseline using model-baseline deltas."
+        ),
+    )
+    parser.add_argument(
+        "--auto-x-zoom-frac",
+        type=float,
+        default=0.01,
+        help=(
+            "Baseline threshold fraction for trim-baseline mode: "
+            "|model-baseline| < frac * (model_max-model_min)."
+        ),
+    )
+    parser.add_argument(
+        "--auto-x-zoom-pad",
+        type=float,
+        default=0.0,
+        help="Optional x-padding added to auto-trimmed bounds (x units).",
+    )
+    parser.add_argument(
+        "--x-zoom-range",
+        help="Manual x-window override as 'xmin,xmax'.",
+    )
+    parser.add_argument(
+        "--normalize-mode",
+        choices=["none", "additive", "affine"],
+        default="none",
+        help=(
+            "Cross-band normalization mode to match a reference band. "
+            "'additive' fits y'=y+b; 'affine' fits y'=a*y+b."
+        ),
+    )
+    parser.add_argument(
+        "--normalize-reference-band",
+        help="Reference band label used for cross-band normalization.",
+    )
+    parser.add_argument(
+        "--normalize-source",
+        choices=["model", "data"],
+        default="model",
+        help=(
+            "Series used to estimate normalization coefficients. "
+            "'model' requires model columns on all normalized bands."
+        ),
+    )
+    parser.add_argument(
+        "--normalize-min-overlap",
+        type=int,
+        default=8,
+        help="Minimum exact x-overlap points required for normalization fit.",
     )
     parser.add_argument(
         "--tex",
@@ -364,21 +500,303 @@ def require_same_model_cadence(
         )
 
 
+def parse_x_zoom_range(spec: str | None) -> tuple[float, float] | None:
+    if not spec:
+        return None
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise SystemExit(
+            "--x-zoom-range must be provided as 'xmin,xmax'."
+        )
+    try:
+        xmin = float(parts[0])
+        xmax = float(parts[1])
+    except ValueError:
+        raise SystemExit(
+            "--x-zoom-range contains non-numeric values."
+        ) from None
+    if not np.isfinite(xmin) or not np.isfinite(xmax):
+        raise SystemExit("--x-zoom-range values must be finite.")
+    if xmin >= xmax:
+        raise SystemExit("--x-zoom-range requires xmin < xmax.")
+    return (xmin, xmax)
+
+
+def infer_scalar_baseline(
+    x_model: np.ndarray,
+    y_model: np.ndarray,
+    method: str,
+    tail_frac: float,
+    quantile: float,
+    consistency_frac: float,
+) -> tuple[float, dict[str, float | str]]:
+    if y_model.size == 0:
+        raise SystemExit("Cannot infer baseline from empty model series.")
+    if not (0.0 < quantile < 1.0):
+        raise SystemExit("--baseline-quantile must satisfy 0 < q < 1.")
+    if not (0.0 < tail_frac <= 0.5):
+        raise SystemExit("--baseline-tail-frac must satisfy 0 < frac <= 0.5.")
+    if consistency_frac < 0:
+        raise SystemExit("--baseline-consistency-frac must be >= 0.")
+
+    amp = float(np.nanmax(y_model) - np.nanmin(y_model))
+    if method == "global-median":
+        baseline = float(np.nanmedian(y_model))
+        return baseline, {"method": method}
+    if method == "quantile-high":
+        baseline = float(np.nanquantile(y_model, quantile))
+        return baseline, {"method": method, "quantile": quantile}
+    if method == "quantile-low":
+        baseline = float(np.nanquantile(y_model, 1.0 - quantile))
+        return baseline, {"method": method, "quantile": 1.0 - quantile}
+    order = np.argsort(x_model)
+    y_sorted = y_model[order]
+    n = y_sorted.size
+    n_tail = max(1, int(np.floor(n * tail_frac)))
+    head = y_sorted[:n_tail]
+    tail = y_sorted[-n_tail:]
+    head_med = float(np.nanmedian(head))
+    tail_med = float(np.nanmedian(tail))
+    if amp > 0:
+        diff = abs(head_med - tail_med)
+        if diff > consistency_frac * amp:
+            raise SystemExit(
+                "Tail-median baseline inference is unstable: head/tail medians "
+                "differ too much relative to model range. Provide --baseline-level "
+                "or use --baseline-mode column with --baseline-col."
+            )
+    baseline = float(np.nanmedian(np.concatenate([head, tail])))
+    return baseline, {
+        "method": method,
+        "tail_frac": tail_frac,
+        "head_median": head_med,
+        "tail_median": tail_med,
+    }
+
+
+def resolve_baseline_series(
+    args: argparse.Namespace,
+    model_x: np.ndarray,
+    model_y: np.ndarray,
+    model_x_all: np.ndarray,
+    df: pd.DataFrame,
+) -> tuple[np.ndarray, dict[str, float | str]]:
+    if args.baseline_mode == "column":
+        if not args.baseline_col:
+            raise SystemExit(
+                "--baseline-mode column requires --baseline-col."
+            )
+        if args.baseline_col not in df.columns:
+            raise SystemExit(f"Baseline column not found: {args.baseline_col}")
+        baseline_all = numeric_series(df, args.baseline_col)
+        base_x, baseline = extract_paired_series(
+            model_x_all, baseline_all, f"Baseline '{args.baseline_col}'"
+        )
+        require_same_model_cadence(model_x, base_x, f"Baseline '{args.baseline_col}'")
+        return baseline, {"mode": "column", "column": args.baseline_col}
+
+    if args.baseline_col:
+        raise SystemExit(
+            "--baseline-col is only valid with --baseline-mode column."
+        )
+
+    if args.baseline_level is not None:
+        baseline_level = float(args.baseline_level)
+        return np.full_like(model_y, baseline_level, dtype=float), {
+            "mode": "scalar",
+            "source": "explicit",
+            "level": baseline_level,
+        }
+
+    baseline_level, details = infer_scalar_baseline(
+        x_model=model_x,
+        y_model=model_y,
+        method=args.baseline_method,
+        tail_frac=args.baseline_tail_frac,
+        quantile=args.baseline_quantile,
+        consistency_frac=args.baseline_consistency_frac,
+    )
+    metadata: dict[str, float | str] = {
+        "mode": "scalar",
+        "source": "inferred",
+        "level": baseline_level,
+    }
+    metadata.update(details)
+    return np.full_like(model_y, baseline_level, dtype=float), metadata
+
+
+def compute_trim_baseline_window(
+    model_x: np.ndarray,
+    model_y: np.ndarray,
+    baseline: np.ndarray,
+    frac: float,
+    pad: float,
+) -> tuple[float, float]:
+    if model_x.size == 0:
+        raise SystemExit("Cannot compute auto x-zoom from empty model series.")
+    if frac <= 0:
+        raise SystemExit("--auto-x-zoom-frac must be > 0.")
+    if pad < 0:
+        raise SystemExit("--auto-x-zoom-pad must be >= 0.")
+    amp = float(np.nanmax(model_y) - np.nanmin(model_y))
+    if not np.isfinite(amp) or amp <= 0:
+        raise SystemExit(
+            "Model dynamic range is zero; cannot determine baseline trim window."
+        )
+    threshold = frac * amp
+    delta = np.abs(model_y - baseline)
+    event_mask = np.isfinite(delta) & (delta >= threshold)
+    if not np.any(event_mask):
+        raise SystemExit(
+            "No non-baseline model region detected for auto x-zoom. "
+            "Adjust --auto-x-zoom-frac or provide --x-zoom-range."
+        )
+    x_event = model_x[event_mask]
+    xmin = float(np.nanmin(x_event) - pad)
+    xmax = float(np.nanmax(x_event) + pad)
+    if xmin >= xmax:
+        raise SystemExit(
+            "Auto x-zoom produced invalid bounds."
+        )
+    return xmin, xmax
+
+
+def parse_band_specs(
+    args: argparse.Namespace, df: pd.DataFrame, default_y_kind: str
+) -> list[dict[str, str | None]]:
+    bands: list[dict[str, str | None]] = [
+        {
+            "label": args.band_label,
+            "x_col": args.x_col,
+            "y_col": args.y_col,
+            "err_col": args.err_col,
+            "model_col": args.model_col,
+            "y_kind": default_y_kind,
+        }
+    ]
+    for raw in args.band_spec:
+        parts = [p.strip() for p in raw.split(",")]
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            raise SystemExit(
+                "Invalid --band-spec. Expected "
+                "'label,y_col[,err_col[,x_col[,model_col[,y_kind]]]]'."
+            )
+        label = parts[0]
+        y_col = parts[1]
+        err_col = parts[2] if len(parts) >= 3 and parts[2] else None
+        x_col = parts[3] if len(parts) >= 4 and parts[3] else args.x_col
+        model_col = parts[4] if len(parts) >= 5 and parts[4] else None
+        y_kind = parts[5] if len(parts) >= 6 and parts[5] else default_y_kind
+        if y_kind not in {"magnification", "flux", "magnitude", "delta_flux"}:
+            raise SystemExit(
+                f"Invalid y_kind in --band-spec '{label}': {y_kind}"
+            )
+        bands.append(
+            {
+                "label": label,
+                "x_col": x_col,
+                "y_col": y_col,
+                "err_col": err_col,
+                "model_col": model_col,
+                "y_kind": y_kind,
+            }
+        )
+
+    labels = [str(b["label"]) for b in bands]
+    if len(set(labels)) != len(labels):
+        raise SystemExit("Band labels must be unique.")
+
+    for band in bands:
+        x_col = str(band["x_col"])
+        y_col = str(band["y_col"])
+        if x_col not in df.columns:
+            raise SystemExit(f"Band '{band['label']}' x column not found: {x_col}")
+        if y_col not in df.columns:
+            raise SystemExit(f"Band '{band['label']}' y column not found: {y_col}")
+        if band["err_col"] and str(band["err_col"]) not in df.columns:
+            raise SystemExit(
+                f"Band '{band['label']}' error column not found: {band['err_col']}"
+            )
+        if band["model_col"] and str(band["model_col"]) not in df.columns:
+            raise SystemExit(
+                f"Band '{band['label']}' model column not found: {band['model_col']}"
+            )
+    return bands
+
+
+def overlap_pairs(
+    ref_x: np.ndarray,
+    ref_y: np.ndarray,
+    target_x: np.ndarray,
+    target_y: np.ndarray,
+    ref_name: str,
+    target_name: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    ref_df = pd.DataFrame({"x": ref_x, "y": ref_y})
+    tgt_df = pd.DataFrame({"x": target_x, "y": target_y})
+    if ref_df["x"].duplicated().any():
+        raise SystemExit(
+            f"{ref_name} has duplicate x-values; normalization mapping is ambiguous."
+        )
+    if tgt_df["x"].duplicated().any():
+        raise SystemExit(
+            f"{target_name} has duplicate x-values; normalization mapping is ambiguous."
+        )
+    merged = ref_df.merge(tgt_df, on="x", how="inner", suffixes=("_ref", "_target"))
+    if merged.empty:
+        raise SystemExit(
+            f"No exact x-overlap between {ref_name} and {target_name} for normalization."
+        )
+    return merged["y_target"].to_numpy(), merged["y_ref"].to_numpy()
+
+
+def fit_normalization(
+    mode: str, target: np.ndarray, ref: np.ndarray
+) -> tuple[float, float]:
+    if mode == "additive":
+        offset = float(np.nanmedian(ref - target))
+        return 1.0, offset
+    if mode == "affine":
+        design = np.column_stack([target, np.ones_like(target)])
+        coeff, *_ = np.linalg.lstsq(design, ref, rcond=None)
+        scale = float(coeff[0])
+        offset = float(coeff[1])
+        return scale, offset
+    return 1.0, 0.0
+
+
 def main() -> None:
     args = parse_args()
+    y_kind = args.y_kind if args.y_kind else args.mode
+    if args.y_kind and args.mode != "flux":
+        mode_kind = args.mode
+        if mode_kind != args.y_kind:
+            raise SystemExit(
+                "Conflicting y semantics: --mode and --y-kind disagree. "
+                "Use one convention."
+            )
+    if y_kind == "magnitude":
+        mode_for_render = "magnitude"
+    else:
+        mode_for_render = "flux"
+
     if args.tex:
         check_tex_dependencies()
         plt.rcParams["text.usetex"] = True
         plt.rcParams["font.family"] = "serif"
     df = pd.read_csv(args.input)
+    bands = parse_band_specs(args, df, y_kind)
+    band_y_kinds = sorted({str(b["y_kind"]) for b in bands})
+    if len(band_y_kinds) != 1:
+        raise SystemExit(
+            "Mixed y-kind values are not supported in a single panel. "
+            "Split by physical quantity or convert first."
+        )
+    y_kind = band_y_kinds[0]
+    mode_for_render = "magnitude" if y_kind == "magnitude" else "flux"
+    multi_band = len(bands) > 1
 
-    for col in [args.x_col, args.y_col]:
-        if col not in df.columns:
-            raise SystemExit(f"Missing required column: {col}")
-
-    has_model = bool(args.model_col and args.model_col in df.columns)
-    if args.model_col and not has_model:
-        raise SystemExit(f"Model column not found: {args.model_col}")
+    has_model = any(bool(b["model_col"]) for b in bands)
     has_initial_model = bool(
         args.initial_model_col and args.initial_model_col in df.columns
     )
@@ -390,6 +808,41 @@ def main() -> None:
         raise SystemExit(
             f"Posterior model column(s) not found: {', '.join(missing_posterior)}"
         )
+    if multi_band and (posterior_cols or has_initial_model):
+        raise SystemExit(
+            "Multiband mode does not support --posterior-model-col or --initial-model-col yet."
+        )
+    if multi_band and args.residual_col:
+        raise SystemExit(
+            "--residual-col is not supported in multiband mode."
+        )
+
+    if args.normalize_mode != "none":
+        if not args.normalize_reference_band:
+            raise SystemExit(
+                "--normalize-reference-band is required when --normalize-mode is not 'none'."
+            )
+        band_names = {str(b["label"]) for b in bands}
+        if args.normalize_reference_band not in band_names:
+            raise SystemExit(
+                f"Normalization reference band not found: {args.normalize_reference_band}"
+            )
+        if y_kind == "magnification":
+            raise SystemExit(
+                "Normalization is invalid for y-kind='magnification'. Use raw magnification."
+            )
+        if args.normalize_mode == "affine" and y_kind == "magnitude":
+            raise SystemExit(
+                "Normalization mode 'affine' is invalid for y-kind='magnitude' "
+                "(use additive offset)."
+            )
+    elif args.normalize_reference_band:
+        raise SystemExit(
+            "--normalize-reference-band requires --normalize-mode additive|affine."
+        )
+    if args.normalize_min_overlap < 2:
+        raise SystemExit("--normalize-min-overlap must be >= 2.")
+
     uses_model_series = bool(has_model or has_initial_model or posterior_cols)
     if uses_model_series and not args.model_x_col:
         raise SystemExit(
@@ -411,228 +864,406 @@ def main() -> None:
         fig, ax = plt.subplots(figsize=(9, 5))
         ax_resid = None
 
-    x_data_all = numeric_series(df, args.x_col)
-    y_data_all = numeric_series(df, args.y_col)
-    x_data_plot_all, x_axis_label, x_axis_shift = build_x_axis_context(
-        x_data_all,
+    x_anchor_all = numeric_series(df, args.x_col)
+    x_anchor_plot_all, x_axis_label, x_axis_shift = build_x_axis_context(
+        x_anchor_all,
         args.x_label,
         args.x_var,
         args.x_unit,
         args.x_offset,
         args.x_offset_mod,
     )
-    data_mask = np.isfinite(x_data_all) & np.isfinite(y_data_all)
-    x_data = x_data_all[data_mask]
-    x_data_plot = x_data_plot_all[data_mask]
-    y_data = y_data_all[data_mask]
-
-    err_data = None
-    if args.err_col and args.err_col in df.columns:
-        err_data_all = numeric_series(df, args.err_col)
-        err_data = err_data_all[data_mask]
-    residual_input = None
-    if args.residual_col:
-        if args.residual_col not in df.columns:
-            raise SystemExit(f"Residual column not found: {args.residual_col}")
-        residual_input = numeric_series(df, args.residual_col)[data_mask]
+    x_zoom_manual = parse_x_zoom_range(args.x_zoom_range)
+    x_zoom_auto: tuple[float, float] | None = None
+    baseline_metadata: dict[str, float | str] | None = None
+    residual_source: str | dict[str, str] = "none"
+    residual_source_by_band: dict[str, str] = {}
+    normalization_meta: dict[str, dict[str, float | str]] = {}
 
     model_x_all = numeric_series(df, args.model_x_col) if args.model_x_col else None
     model_x_plot_all = (model_x_all - x_axis_shift) if model_x_all is not None else None
 
-    series = []
-    if err_data is not None:
-        container = ax.errorbar(
-            x_data_plot,
-            y_data,
-            yerr=err_data,
-            fmt="o",
-            ms=3,
-            alpha=0.8,
-            label="Data",
-            zorder=2,
-        )
-        data_line = container.lines[0]
-    else:
-        (data_line,) = ax.plot(
-            x_data_plot, y_data, "o", ms=3, alpha=0.8, label="Data", zorder=2
-        )
+    palette = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
+    markers = ["o", "s", "^", "D", "v", "P"]
 
-    series.append(
-        {
-            "name": "Data",
-            "color": data_line.get_color(),
-            "marker": data_line.get_marker(),
-            "linestyle": data_line.get_linestyle(),
-            "alpha": 0.8,
-            "linewidth": float(data_line.get_linewidth()),
-        }
-    )
+    band_states: list[dict[str, object]] = []
+    for band in bands:
+        label = str(band["label"])
+        x_all = numeric_series(df, str(band["x_col"]))
+        y_all = numeric_series(df, str(band["y_col"]))
+        data_mask = np.isfinite(x_all) & np.isfinite(y_all)
+        x_data = x_all[data_mask]
+        x_data_plot = x_data - x_axis_shift
+        y_data = y_all[data_mask]
 
-    if has_model:
-        model_y_all = numeric_series(df, args.model_col)
-        model_x, model_y = extract_paired_series(model_x_all, model_y_all, "Model")
-        model_x_plot, _ = extract_paired_series(model_x_plot_all, model_y_all, "Model")
-        (model_line,) = ax.plot(
-            model_x_plot,
-            model_y,
-            "-",
-            lw=1.8,
-            color=args.model_color,
-            label="Model",
-            zorder=8,
-        )
-        series.append(
+        err_data = None
+        if band["err_col"]:
+            err_all = numeric_series(df, str(band["err_col"]))
+            err_data = err_all[data_mask]
+
+        model_x = None
+        model_x_plot = None
+        model_y = None
+        model_col = str(band["model_col"]) if band["model_col"] else None
+        if model_col:
+            model_y_all = numeric_series(df, model_col)
+            model_x, model_y = extract_paired_series(
+                model_x_all, model_y_all, f"Model ({label})"
+            )
+            model_x_plot, _ = extract_paired_series(
+                model_x_plot_all, model_y_all, f"Model ({label})"
+            )
+
+        band_states.append(
             {
-                "name": "Model",
-                "color": model_line.get_color(),
-                "marker": model_line.get_marker(),
-                "linestyle": model_line.get_linestyle(),
-                "alpha": 1.0,
-                "linewidth": float(model_line.get_linewidth()),
+                "label": label,
+                "x_data": x_data,
+                "x_data_plot": x_data_plot,
+                "y_data": y_data,
+                "err_data": err_data,
+                "model_x": model_x,
+                "model_x_plot": model_x_plot,
+                "model_y": model_y,
+                "model_col": model_col,
             }
         )
-        if residual_input is None:
-            try:
-                model_on_data = values_for_x(x_data, model_x, model_y, "Model")
-            except SystemExit:
+
+    if args.normalize_mode == "none":
+        for state in band_states:
+            normalization_meta[str(state["label"])] = {
+                "mode": "none",
+                "scale": 1.0,
+                "offset": 0.0,
+            }
+            state["norm_scale"] = 1.0
+            state["norm_offset"] = 0.0
+    else:
+        ref_label = str(args.normalize_reference_band)
+        ref_state = next((s for s in band_states if s["label"] == ref_label), None)
+        if ref_state is None:
+            raise SystemExit(f"Normalization reference band not found: {ref_label}")
+        for state in band_states:
+            label = str(state["label"])
+            if label == ref_label:
+                state["norm_scale"] = 1.0
+                state["norm_offset"] = 0.0
+                normalization_meta[label] = {
+                    "mode": args.normalize_mode,
+                    "source": args.normalize_source,
+                    "reference_band": ref_label,
+                    "scale": 1.0,
+                    "offset": 0.0,
+                    "overlap_points": int(np.asarray(state["x_data"]).size),
+                }
+                continue
+            if args.normalize_source == "model":
+                if ref_state["model_y"] is None or state["model_y"] is None:
+                    raise SystemExit(
+                        "Normalization source 'model' requires model columns "
+                        "for all normalized bands."
+                    )
+                target_y, ref_y = overlap_pairs(
+                    ref_x=np.asarray(ref_state["model_x"]),
+                    ref_y=np.asarray(ref_state["model_y"]),
+                    target_x=np.asarray(state["model_x"]),
+                    target_y=np.asarray(state["model_y"]),
+                    ref_name=f"{ref_label} model",
+                    target_name=f"{label} model",
+                )
+            else:
+                target_y, ref_y = overlap_pairs(
+                    ref_x=np.asarray(ref_state["x_data"]),
+                    ref_y=np.asarray(ref_state["y_data"]),
+                    target_x=np.asarray(state["x_data"]),
+                    target_y=np.asarray(state["y_data"]),
+                    ref_name=f"{ref_label} data",
+                    target_name=f"{label} data",
+                )
+            overlap_n = int(target_y.size)
+            if overlap_n < args.normalize_min_overlap:
                 raise SystemExit(
-                    "Model x-values do not cover data x-values; provide --residual-col."
-                ) from None
-            residuals = y_data - model_on_data
-            residual_source = "computed"
-        else:
-            residuals = residual_input
-            residual_source = "provided"
-        resid_mask = np.isfinite(residuals)
-        ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
-        if err_data is not None:
-            resid_err_mask = resid_mask & np.isfinite(err_data)
-            if np.any(resid_err_mask):
-                ax_resid.errorbar(
-                    x_data_plot[resid_err_mask],
-                    residuals[resid_err_mask],
-                    yerr=err_data[resid_err_mask],
-                    fmt="o",
-                    ms=2.5,
-                    alpha=0.8,
-                    zorder=4,
+                    f"Insufficient overlap for normalization: {label} vs {ref_label} "
+                    f"has {overlap_n} points; require >= {args.normalize_min_overlap}."
                 )
-            no_err_mask = resid_mask & ~np.isfinite(err_data)
-            if np.any(no_err_mask):
-                ax_resid.plot(
-                    x_data_plot[no_err_mask],
-                    residuals[no_err_mask],
-                    "o",
-                    ms=2.5,
-                    alpha=0.8,
-                    zorder=4,
-                )
-        else:
-            ax_resid.plot(
-                x_data_plot[resid_mask],
-                residuals[resid_mask],
-                "o",
-                ms=2.5,
-                alpha=0.8,
-                zorder=4,
-            )
-        ax_resid.set_ylabel("Residual")
-    elif posterior_cols or has_initial_model:
+            scale, offset = fit_normalization(args.normalize_mode, target_y, ref_y)
+            state["norm_scale"] = scale
+            state["norm_offset"] = offset
+            normalization_meta[label] = {
+                "mode": args.normalize_mode,
+                "source": args.normalize_source,
+                "reference_band": ref_label,
+                "scale": float(scale),
+                "offset": float(offset),
+                "overlap_points": overlap_n,
+            }
+
+    series = []
+    if ax_resid is not None:
         ax_resid.axhline(0.0, color="black", lw=1.0, alpha=0.7)
         ax_resid.set_ylabel("Residual")
 
-    posterior_count = 0
-    posterior_base_color = args.posterior_color
-    for idx, col in enumerate(posterior_cols):
-        posterior_y_all = numeric_series(df, col)
-        posterior_x, posterior_y = extract_paired_series(
-            model_x_all, posterior_y_all, f"Posterior '{col}'"
-        )
-        posterior_x_plot, _ = extract_paired_series(
-            model_x_plot_all, posterior_y_all, f"Posterior '{col}'"
-        )
-        label = "Posterior Samples" if idx == 0 else None
-        (line,) = ax.plot(
-            posterior_x_plot,
-            posterior_y,
-            args.posterior_style,
-            lw=args.posterior_linewidth,
-            alpha=args.posterior_alpha,
-            color=posterior_base_color,
-            label=label,
-            zorder=7,
-        )
-        posterior_count += 1
-        if has_model:
-            require_same_model_cadence(model_x, posterior_x, f"Posterior '{col}'")
-            posterior_on_data = values_for_x(
-                x_data, posterior_x, posterior_y, f"Posterior '{col}'"
+    zoom_model_x = None
+    zoom_model_y = None
+    for idx, state in enumerate(band_states):
+        label = str(state["label"])
+        color = palette[idx % len(palette)]
+        marker = markers[idx % len(markers)]
+        scale = float(state["norm_scale"])
+        offset = float(state["norm_offset"])
+        y_data_norm = scale * np.asarray(state["y_data"]) + offset
+        state["y_data_norm"] = y_data_norm
+        err_data = state["err_data"]
+        err_norm = None
+        if err_data is not None:
+            err_norm = np.abs(scale) * np.asarray(err_data)
+            state["err_norm"] = err_norm
+        x_data_plot = np.asarray(state["x_data_plot"])
+
+        if err_norm is not None:
+            container = ax.errorbar(
+                x_data_plot,
+                y_data_norm,
+                yerr=err_norm,
+                fmt=marker,
+                ms=3,
+                alpha=0.82,
+                color=color,
+                label=label,
+                zorder=2,
             )
-            resid = y_data - posterior_on_data
-            resid_mask = np.isfinite(resid)
-            ax_resid.plot(
-                x_data_plot[resid_mask],
-                resid[resid_mask],
-                args.posterior_style,
-                lw=max(0.9, args.posterior_linewidth * 0.75),
-                alpha=min(0.7, args.posterior_alpha * 1.2),
-                color=posterior_base_color,
-                zorder=3,
+            data_line = container.lines[0]
+        else:
+            (data_line,) = ax.plot(
+                x_data_plot,
+                y_data_norm,
+                marker,
+                ms=3,
+                alpha=0.82,
+                color=color,
+                label=label,
+                zorder=2,
             )
-        if idx == 0:
+        series.append(
+            {
+                "name": label,
+                "color": data_line.get_color(),
+                "marker": data_line.get_marker(),
+                "linestyle": data_line.get_linestyle(),
+                "alpha": 0.82,
+                "linewidth": float(data_line.get_linewidth()),
+            }
+        )
+
+        if state["model_y"] is not None:
+            model_y_norm = scale * np.asarray(state["model_y"]) + offset
+            state["model_y_norm"] = model_y_norm
+            (model_line,) = ax.plot(
+                np.asarray(state["model_x_plot"]),
+                model_y_norm,
+                "-",
+                lw=1.6,
+                color=color,
+                alpha=0.95,
+                label=f"{label} Model",
+                zorder=8,
+            )
             series.append(
                 {
-                    "name": "Posterior Samples",
-                    "color": line.get_color(),
-                    "marker": line.get_marker(),
-                    "linestyle": line.get_linestyle(),
-                    "alpha": float(args.posterior_alpha),
-                    "linewidth": float(args.posterior_linewidth),
+                    "name": f"{label} Model",
+                    "color": model_line.get_color(),
+                    "marker": model_line.get_marker(),
+                    "linestyle": model_line.get_linestyle(),
+                    "alpha": 0.95,
+                    "linewidth": float(model_line.get_linewidth()),
                 }
             )
+            if ax_resid is not None:
+                model_on_data = values_for_x(
+                    np.asarray(state["x_data"]),
+                    np.asarray(state["model_x"]),
+                    model_y_norm,
+                    f"Model ({label})",
+                )
+                residuals = y_data_norm - model_on_data
+                resid_mask = np.isfinite(residuals)
+                residual_source_by_band[label] = "computed"
+                if err_norm is not None:
+                    resid_err_mask = resid_mask & np.isfinite(err_norm)
+                    if np.any(resid_err_mask):
+                        ax_resid.errorbar(
+                            x_data_plot[resid_err_mask],
+                            residuals[resid_err_mask],
+                            yerr=err_norm[resid_err_mask],
+                            fmt=marker,
+                            ms=2.4,
+                            alpha=0.72,
+                            color=color,
+                            zorder=4,
+                        )
+                    no_err_mask = resid_mask & ~np.isfinite(err_norm)
+                    if np.any(no_err_mask):
+                        ax_resid.plot(
+                            x_data_plot[no_err_mask],
+                            residuals[no_err_mask],
+                            marker,
+                            ms=2.4,
+                            alpha=0.72,
+                            color=color,
+                            zorder=4,
+                        )
+                else:
+                    ax_resid.plot(
+                        x_data_plot[resid_mask],
+                        residuals[resid_mask],
+                        marker,
+                        ms=2.4,
+                        alpha=0.72,
+                        color=color,
+                        zorder=4,
+                    )
 
-    if has_initial_model:
-        init_y_all = numeric_series(df, args.initial_model_col)
-        init_x, init_y = extract_paired_series(
-            model_x_all, init_y_all, "Initial model"
-        )
-        init_x_plot, _ = extract_paired_series(
-            model_x_plot_all, init_y_all, "Initial model"
-        )
-        (init_line,) = ax.plot(
-            init_x_plot,
-            init_y,
-            args.initial_model_style,
-            lw=1.5,
-            color=args.initial_model_color,
-            alpha=0.95,
-            label="Initial Model",
-            zorder=7.5,
-        )
-        series.append(
-            {
-                "name": "Initial Model",
-                "color": init_line.get_color(),
-                "marker": init_line.get_marker(),
-                "linestyle": init_line.get_linestyle(),
-                "alpha": 0.95,
-                "linewidth": float(init_line.get_linewidth()),
-            }
-        )
-        if ax_resid is not None and has_model:
-            require_same_model_cadence(model_x, init_x, "Initial model")
-            init_on_data = values_for_x(x_data, init_x, init_y, "Initial model")
-            init_resid = y_data - init_on_data
-            init_resid_mask = np.isfinite(init_resid)
-            ax_resid.plot(
-                x_data_plot[init_resid_mask],
-                init_resid[init_resid_mask],
-                args.initial_model_style,
-                lw=0.9,
-                color=args.initial_model_color,
-                alpha=0.6,
-                zorder=3.5,
+            ref_ok = (
+                args.normalize_reference_band is None
+                or label == args.normalize_reference_band
             )
+            if zoom_model_x is None and ref_ok:
+                zoom_model_x = np.asarray(state["model_x"])
+                zoom_model_y = model_y_norm
+
+    if residual_source_by_band:
+        if len(residual_source_by_band) == 1 and not multi_band:
+            residual_source = next(iter(residual_source_by_band.values()))
+        else:
+            residual_source = residual_source_by_band
+
+    if args.auto_x_zoom == "trim-baseline":
+        if zoom_model_x is None or zoom_model_y is None:
+            raise SystemExit("--auto-x-zoom requires at least one model series.")
+        baseline_series, baseline_metadata = resolve_baseline_series(
+            args=args,
+            model_x=zoom_model_x,
+            model_y=zoom_model_y,
+            model_x_all=model_x_all,
+            df=df,
+        )
+        x_zoom_auto = compute_trim_baseline_window(
+            model_x=zoom_model_x,
+            model_y=zoom_model_y,
+            baseline=baseline_series,
+            frac=args.auto_x_zoom_frac,
+            pad=args.auto_x_zoom_pad,
+        )
+    elif args.auto_x_zoom != "none":
+        raise SystemExit("--auto-x-zoom requires --model-col.")
+
+    posterior_count = 0
+    if not multi_band:
+        base_state = band_states[0]
+        x_data = np.asarray(base_state["x_data"])
+        x_data_plot = np.asarray(base_state["x_data_plot"])
+        y_data = np.asarray(base_state["y_data_norm"])
+        err_data = (
+            np.asarray(base_state["err_norm"])
+            if base_state.get("err_norm") is not None
+            else None
+        )
+        model_x = (
+            np.asarray(base_state["model_x"])
+            if base_state.get("model_x") is not None
+            else None
+        )
+
+        posterior_base_color = args.posterior_color
+        for idx, col in enumerate(posterior_cols):
+            posterior_y_all = numeric_series(df, col)
+            posterior_x, posterior_y = extract_paired_series(
+                model_x_all, posterior_y_all, f"Posterior '{col}'"
+            )
+            posterior_x_plot, _ = extract_paired_series(
+                model_x_plot_all, posterior_y_all, f"Posterior '{col}'"
+            )
+            label = "Posterior Samples" if idx == 0 else None
+            (line,) = ax.plot(
+                posterior_x_plot,
+                posterior_y,
+                args.posterior_style,
+                lw=args.posterior_linewidth,
+                alpha=args.posterior_alpha,
+                color=posterior_base_color,
+                label=label,
+                zorder=7,
+            )
+            posterior_count += 1
+            if has_model and model_x is not None:
+                require_same_model_cadence(model_x, posterior_x, f"Posterior '{col}'")
+                posterior_on_data = values_for_x(
+                    x_data, posterior_x, posterior_y, f"Posterior '{col}'"
+                )
+                resid = y_data - posterior_on_data
+                resid_mask = np.isfinite(resid)
+                ax_resid.plot(
+                    x_data_plot[resid_mask],
+                    resid[resid_mask],
+                    args.posterior_style,
+                    lw=max(0.9, args.posterior_linewidth * 0.75),
+                    alpha=min(0.7, args.posterior_alpha * 1.2),
+                    color=posterior_base_color,
+                    zorder=3,
+                )
+            if idx == 0:
+                series.append(
+                    {
+                        "name": "Posterior Samples",
+                        "color": line.get_color(),
+                        "marker": line.get_marker(),
+                        "linestyle": line.get_linestyle(),
+                        "alpha": float(args.posterior_alpha),
+                        "linewidth": float(args.posterior_linewidth),
+                    }
+                )
+
+        if has_initial_model:
+            init_y_all = numeric_series(df, args.initial_model_col)
+            init_x, init_y = extract_paired_series(
+                model_x_all, init_y_all, "Initial model"
+            )
+            init_x_plot, _ = extract_paired_series(
+                model_x_plot_all, init_y_all, "Initial model"
+            )
+            (init_line,) = ax.plot(
+                init_x_plot,
+                init_y,
+                args.initial_model_style,
+                lw=1.5,
+                color=args.initial_model_color,
+                alpha=0.95,
+                label="Initial Model",
+                zorder=7.5,
+            )
+            series.append(
+                {
+                    "name": "Initial Model",
+                    "color": init_line.get_color(),
+                    "marker": init_line.get_marker(),
+                    "linestyle": init_line.get_linestyle(),
+                    "alpha": 0.95,
+                    "linewidth": float(init_line.get_linewidth()),
+                }
+            )
+            if ax_resid is not None and has_model and model_x is not None:
+                require_same_model_cadence(model_x, init_x, "Initial model")
+                init_on_data = values_for_x(x_data, init_x, init_y, "Initial model")
+                init_resid = y_data - init_on_data
+                init_resid_mask = np.isfinite(init_resid)
+                ax_resid.plot(
+                    x_data_plot[init_resid_mask],
+                    init_resid[init_resid_mask],
+                    args.initial_model_style,
+                    lw=0.9,
+                    color=args.initial_model_color,
+                    alpha=0.6,
+                    zorder=3.5,
+                )
 
     validation_warnings: list[str] = []
     if not args.tex:
@@ -661,7 +1292,7 @@ def main() -> None:
     ax.set_ylabel(args.y_label)
 
     # Standard astronomy convention for magnitude-based plots.
-    if args.mode == "magnitude":
+    if mode_for_render == "magnitude":
         ax.invert_yaxis()
 
     ax.legend(loc="best", fontsize=9)
@@ -701,6 +1332,22 @@ def main() -> None:
     if ax_resid is not None:
         ax_resid.set_xlabel(x_axis_label)
 
+    x_zoom_source = "none"
+    x_zoom_active = None
+    if x_zoom_manual is not None:
+        x_zoom_active = x_zoom_manual
+        x_zoom_source = "manual"
+    elif x_zoom_auto is not None:
+        x_zoom_active = x_zoom_auto
+        x_zoom_source = "auto-trim-baseline"
+    if x_zoom_active is not None:
+        x_min, x_max = x_zoom_active
+        x_min_plot = x_min - x_axis_shift
+        x_max_plot = x_max - x_axis_shift
+        ax.set_xlim(x_min_plot, x_max_plot)
+        if ax_resid is not None:
+            ax_resid.set_xlim(x_min_plot, x_max_plot)
+
     fig.tight_layout()
 
     output_stem = Path(args.output)
@@ -725,7 +1372,14 @@ def main() -> None:
         ],
         "figure": {
             "title": args.title,
-            "mode": args.mode,
+            "mode": mode_for_render,
+            "y_kind": y_kind,
+            "multi_band": bool(multi_band),
+            "band_labels": [str(b["label"]) for b in bands],
+            "normalization_mode": args.normalize_mode,
+            "normalization_reference_band": args.normalize_reference_band,
+            "normalization_source": args.normalize_source,
+            "normalization": normalization_meta,
             "tex_enabled": bool(args.tex),
             "has_residual_panel": bool(has_model or posterior_cols or has_initial_model),
             "has_initial_model_overlay": bool(has_initial_model),
@@ -733,6 +1387,12 @@ def main() -> None:
             "posterior_sample_count": int(posterior_count),
             "model_x_column": args.model_x_col,
             "x_axis_shift": x_axis_shift,
+            "x_zoom_source": x_zoom_source,
+            "x_zoom_range": list(x_zoom_active) if x_zoom_active else None,
+            "auto_x_zoom": args.auto_x_zoom,
+            "auto_x_zoom_frac": args.auto_x_zoom_frac,
+            "auto_x_zoom_pad": args.auto_x_zoom_pad,
+            "baseline": baseline_metadata,
             "residual_source": residual_source if has_model else "none",
             "vertical_annotations": vlines,
             "labels": {"x": x_axis_label, "y": args.y_label},

@@ -8,11 +8,13 @@ Required columns:
 Optional columns:
 - `observatory`
 - `model_flux` or `model_magnitude`
+- Additional band columns (for multiband overlays), each with explicit y-kind semantics
 
 Expected layout:
 - Top panel: data + model curve(s)
 - Bottom panel: residuals (`data - model`) with zero reference line
 - Optional inset: anomaly zoom window
+- Optional multiband normalization to a declared reference band (never mixed physical y-kinds)
 
 ## 2) Caustic and Source Trajectory
 Required inputs:

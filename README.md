@@ -39,9 +39,15 @@ Skill repository for autonomous Roman Space Telescope analysis workflows.
 - Data + best-fit model + optional initial model
 - Optional transparent posterior sample overlays
 - Residual panel generation
+- Explicit y-quantity semantics via `--y-kind` (`magnification|flux|magnitude|delta_flux`)
+- Multiband overlays via repeatable `--band-spec` with per-band columns and labels
+- Cross-band normalization to a reference band via `--normalize-mode` + `--normalize-reference-band`
 - Optional `--model-x-col` for higher-resolution model/posterior/initial curves
 - Residual-panel error bars when `--err-col` is provided
 - If model/data x-cadence differs, provide residuals explicitly via `--residual-col`
+- Manual x-windowing via `--x-zoom-range xmin,xmax`
+- Model-driven head/tail baseline trimming via `--auto-x-zoom trim-baseline`
+- Baseline definition for auto-zoom via scalar inference/override or `--baseline-col`
 - Manifest output for downstream quality gates
 
 `skills/plotting/accessibility-checks/scripts/check_accessibility.py` uses:
