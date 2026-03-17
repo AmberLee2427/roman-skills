@@ -3,61 +3,79 @@ name: "roman-plotting-plot-types-lightcurve-residuals"
 description: "Generate Roman lightcurve figures with optional model residual panels from local analysis outputs, with publication-ready labels and export conventions."
 ---
 
-# Roman Plotting Plot Type: Lightcurve + Residuals
+<essential_principles>
+Default to the strict renderer for Roman lightcurve work.
 
-## Purpose
-Provide a repeatable plotting workflow for Roman data analysis, prioritizing microlensing diagnostics and publication-grade figure quality.
+Only use customization guidance when the user explicitly asks for post-processing, composite layouts, talk-specific styling, or another output that the strict path cannot satisfy cleanly.
 
-## Use This Skill When
-- The user requests a Roman lightcurve figure, with or without residual panel.
-- Existing lightcurve plots need standardized axes, labels, units, legends, and exports.
-- You need a deterministic plotting entrypoint for publication figures.
-- Optional: posterior sample trajectories should be overlaid as transparent model curves.
-- Optional: multiband lightcurves must be aligned to a declared reference band.
+Preserve scientific semantics over aesthetics:
+- Do not fabricate data points or uncertainties.
+- Do not drop units or time-frame conventions when known.
+- If required columns are missing, stop and report exactly what is missing.
+- In TeX mode, fail fast with actionable dependency errors rather than raw tracebacks.
+</essential_principles>
 
-## Inputs You Should Confirm
-- Data source path(s).
-- Output directory and filename stem.
-- Target use: exploratory notebook vs publication-ready export.
-- Optional posterior sample model columns (only for posterior-sampling workflows).
+<workflow>
+For the normal path, do this:
 
-## Workflow
-1. Inspect data schema and verify required columns.
-2. Confirm lightcurve/residual layout expectations from `references/plot-types.md`.
-3. Apply style and labeling rules from `references/style-rules.md`.
-4. Generate figure via `scripts/roman_plot.py` (or equivalent local script).
-5. Export both editable and publication formats where applicable.
-6. Validate with checklist in `references/qa-checklist.md`.
+1. Confirm input paths, output stem, and whether the figure is exploratory or publication-facing.
+2. Read `references/plot-types.md` for the required lightcurve-plus-residual layout.
+3. Read `references/style-rules.md` for labels, axis semantics, export rules, and microlensing conventions.
+4. Generate the figure with `scripts/roman_plot.py`.
+5. Read `references/qa-checklist.md` and validate the result before returning it.
 
-## Microlensing Defaults
-- Time axis: use HJD/BJD offset labeling when appropriate (e.g., `HJD - 2450000`).
-- Magnitude plots: invert y-axis.
-- TeX text rendering: enabled by default (`--no-tex` to disable).
-- Include residual panel for model-fit plots.
-- Distinguish observatories by marker shape + color.
-- Overlay baseline model (e.g., 1L1S dashed) when comparing to planetary model.
-- Include anomaly zoom inset for short-timescale perturbations when present.
-- For long baselines, allow model-driven head/tail baseline trimming with explicit threshold metadata.
+Use this strict path by default for:
+- standard lightcurve plots
+- model-fit plots with residuals
+- posterior overlay plots
+- multiband plots that still fit the built-in normalization workflow
+- publication-ready exports
+</workflow>
 
-## Output Contract
+<exception_path>
+Read `examples/README.md` only if one of these is true:
+
+- The user explicitly asks to customize styling beyond strict defaults.
+- The user needs a composite figure such as multiple lightcurves in shared subplots.
+- The user asks for a gallery or side-by-side style comparison.
+- The strict renderer cannot satisfy the requested layout without controlled post-processing.
+
+When you enter this exception path:
+- Render strictly first.
+- Apply the smallest necessary customization afterward.
+- Preserve manifest traceability indicating the figure was customized from strict output.
+</exception_path>
+
+<microlensing_defaults>
+Apply these defaults unless the data or user request requires otherwise:
+- Use HJD/BJD offset labeling when appropriate, such as `HJD - 2450000`.
+- Invert the y-axis for magnitude plots.
+- Enable TeX text rendering by default; use `--no-tex` only when needed.
+- Include a residual panel for model-fit diagnostics.
+- Distinguish observatories by both marker shape and color.
+- Overlay a baseline model such as 1L1S when that comparison is scientifically relevant.
+- Include an anomaly zoom inset when a short-timescale perturbation is present.
+- For long baselines, allow model-driven head/tail trimming only with explicit threshold metadata.
+</microlensing_defaults>
+
+<output_contract>
 Return:
 - `status`: `ok | warning | error`
 - `summary`: one-sentence description of produced figure(s)
 - `artifacts`: absolute output paths
 - `validation`: checklist results with any caveats
 - `provenance`: input file paths and run timestamp
+</output_contract>
 
-## Constraints
-- Do not fabricate data points or uncertainties.
-- Do not drop units/frames in labels when known.
-- Avoid lossy formats for final publication exports.
-- In TeX mode, fail fast with actionable dependency errors rather than raw tracebacks.
-- If required columns are missing, stop and report exactly what is missing.
+<references>
+Read as needed:
+- `references/plot-types.md` for required layout and allowed variants
+- `references/style-rules.md` for style and export policy
+- `references/qa-checklist.md` for final validation
+- `examples/README.md` only for exception-path customization or composition
+</references>
 
-## References
-- `references/plot-types.md`
-- `references/style-rules.md`
-- `references/qa-checklist.md`
-
-## Scripts
+<scripts>
+Primary executable entrypoint:
 - `scripts/roman_plot.py`
+</scripts>

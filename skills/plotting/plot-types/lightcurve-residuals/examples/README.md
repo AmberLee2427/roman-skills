@@ -100,7 +100,7 @@ What it does:
 3. Applies per-event customization (grid) and sets explicit subplot titles in the source renders.
 4. Marks each manifest as customized.
 5. Saves each customized event output.
-6. Builds a combined two-row subplot figure by embedding each rendered panel as an image.
+6. Builds a combined two-row subplot figure by rendering directly into shared Matplotlib axes.
 7. Saves the combined figure.
 
 Run:
@@ -158,5 +158,5 @@ Outputs:
 
 1. The strict renderer still enforces scientific guardrails before customization runs.
 2. If your customizations violate house style, that is intentional and explicit in manifest metadata.
-3. These examples use TeX-rendered text when TeX dependencies are available.
+3. The two-event subplot example keeps the combined PDF vector-native by reusing the renderer on caller-provided axes instead of rasterizing PNG output.
 4. For publication plots, keep strict mode output unless there is a documented reason to customize.

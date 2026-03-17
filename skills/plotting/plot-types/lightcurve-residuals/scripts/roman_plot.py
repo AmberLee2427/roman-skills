@@ -14,6 +14,7 @@ Usage example:
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -1177,7 +1178,10 @@ def build_y_axis_label(
 
 
 def render_lightcurve(
-    args: argparse.Namespace, df: pd.DataFrame | None = None
+    args: argparse.Namespace,
+    df: pd.DataFrame | None = None,
+    target_axes: tuple[object, object | None] | None = None,
+    apply_layout: bool = True,
 ) -> tuple[plt.Figure, dict]:
     journal_profiles = load_journal_profiles()
     journal_profile = (
@@ -1244,6 +1248,10 @@ def render_lightcurve(
         raise SystemExit(
             "--residual-col is not supported in multiband mode."
         )
+    if args.residual_col and args.residual_col not in df.columns:
+        raise SystemExit(f"Residual column not found: {args.residual_col}")
+    if args.residual_col and not has_model:
+        raise SystemExit("--residual-col requires --model-col.")
 
     if args.normalize_mode != "none":
         if not args.normalize_reference_band:
@@ -1297,7 +1305,21 @@ def render_lightcurve(
         journal_profile=journal_profile,
     )
 
-    if has_residual_panel:
+    if target_axes is not None:
+        ax = target_axes[0]
+        ax_resid = target_axes[1]
+        fig = ax.figure
+        if has_residual_panel and ax_resid is None:
+            raise SystemExit(
+                "Residual panel is required for this render; provide target residual axes."
+            )
+        if not has_residual_panel and ax_resid is not None:
+            raise SystemExit(
+                "Residual axes were provided for a render that does not use a residual panel."
+            )
+        if ax_resid is not None and ax_resid.figure is not fig:
+            raise SystemExit("Target axes must belong to the same figure.")
+    elif has_residual_panel:
         fig, (ax, ax_resid) = plt.subplots(
             2,
             1,
@@ -1321,8 +1343,7 @@ def render_lightcurve(
     x_zoom_manual = parse_x_zoom_range(args.x_zoom_range)
     x_zoom_auto: tuple[float, float] | None = None
     baseline_metadata: dict[str, float | str] | None = None
-    residual_source: str | dict[str, str] = "none"
-    residual_source_by_band: dict[str, str] = {}
+    residual_sources: dict[str, str] = {}
     normalization_meta: dict[str, dict[str, float | str]] = {}
 
     model_x_all = numeric_series(df, args.model_x_col) if args.model_x_col else None
@@ -1542,15 +1563,26 @@ def render_lightcurve(
                 }
             )
             if ax_resid is not None:
-                model_on_data = values_for_x(
-                    np.asarray(state["x_data"]),
-                    np.asarray(state["model_x"]),
-                    model_y_norm,
-                    f"Model ({label})",
-                )
-                residuals = y_data_norm - model_on_data
+                if args.residual_col:
+                    residual_all = numeric_series(df, args.residual_col)
+                    residuals = residual_all[data_mask]
+                    source_name = "provided-column"
+                else:
+                    model_on_data = values_for_x(
+                        np.asarray(state["x_data"]),
+                        np.asarray(state["model_x"]),
+                        model_y_norm,
+                        f"Model ({label})",
+                    )
+                    residuals = y_data_norm - model_on_data
+                    source_name = "computed"
                 resid_mask = np.isfinite(residuals)
-                residual_source_by_band[label] = "computed"
+                if not np.any(resid_mask):
+                    raise SystemExit(
+                        f"Residual series for band '{label}' has no finite values."
+                    )
+                residual_key = "best_fit" if not multi_band else f"{label}:best_fit"
+                residual_sources[residual_key] = source_name
                 if err_norm is not None:
                     resid_err_mask = resid_mask & np.isfinite(err_norm)
                     if np.any(resid_err_mask):
@@ -1600,12 +1632,6 @@ def render_lightcurve(
             if zoom_model_x is None and ref_ok:
                 zoom_model_x = np.asarray(state["model_x"])
                 zoom_model_y = model_y_norm
-
-    if residual_source_by_band:
-        if len(residual_source_by_band) == 1 and not multi_band:
-            residual_source = next(iter(residual_source_by_band.values()))
-        else:
-            residual_source = residual_source_by_band
 
     if args.auto_x_zoom == "trim-baseline":
         if zoom_model_x is None or zoom_model_y is None:
@@ -1665,13 +1691,14 @@ def render_lightcurve(
                 zorder=7,
             )
             posterior_count += 1
-            if has_model and model_x is not None:
-                require_same_model_cadence(model_x, posterior_x, f"Posterior '{col}'")
+            if ax_resid is not None:
                 posterior_on_data = values_for_x(
                     x_data, posterior_x, posterior_y, f"Posterior '{col}'"
                 )
                 resid = y_data - posterior_on_data
                 resid_mask = np.isfinite(resid)
+                if not np.any(resid_mask):
+                    raise SystemExit(f"Posterior '{col}' residuals have no finite values.")
                 ax_resid.plot(
                     x_data_plot[resid_mask],
                     resid[resid_mask],
@@ -1684,6 +1711,7 @@ def render_lightcurve(
                     color=posterior_base_color,
                     zorder=3,
                 )
+                residual_sources["posterior"] = "computed"
             if idx == 0:
                 series.append(
                     {
@@ -1724,11 +1752,13 @@ def render_lightcurve(
                     "linewidth": float(init_line.get_linewidth()),
                 }
             )
-            if ax_resid is not None and has_model and model_x is not None:
-                require_same_model_cadence(model_x, init_x, "Initial model")
+            if ax_resid is not None:
                 init_on_data = values_for_x(x_data, init_x, init_y, "Initial model")
                 init_resid = y_data - init_on_data
                 init_resid_mask = np.isfinite(init_resid)
+                if not np.any(init_resid_mask):
+                    raise SystemExit("Initial model residuals have no finite values.")
+                residual_sources["initial_model"] = "computed"
                 ax_resid.plot(
                     x_data_plot[init_resid_mask],
                     init_resid[init_resid_mask],
@@ -1856,7 +1886,15 @@ def render_lightcurve(
         if ax_resid is not None:
             ax_resid.set_xlim(x_min_plot, x_max_plot)
 
-    fig.tight_layout()
+    if not residual_sources:
+        residual_source: str | dict[str, str] = "none"
+    elif len(residual_sources) == 1 and set(residual_sources) == {"best_fit"}:
+        residual_source = residual_sources["best_fit"]
+    else:
+        residual_source = residual_sources
+
+    if apply_layout:
+        fig.tight_layout()
 
     output_stem = Path(args.output)
     vector_path = output_stem.with_suffix(f".{vector_format}")
@@ -1908,7 +1946,7 @@ def render_lightcurve(
             "auto_x_zoom_frac": args.auto_x_zoom_frac,
             "auto_x_zoom_pad": args.auto_x_zoom_pad,
             "baseline": baseline_metadata,
-            "residual_source": residual_source if has_model else "none",
+            "residual_source": residual_source,
             "vertical_annotations": vlines,
             "labels": {"x": x_axis_label, "y": y_axis_label},
             "residual_y_label": residual_y_label,
@@ -1920,7 +1958,10 @@ def render_lightcurve(
             {"format": "png", "path": str(png_path.resolve()), "dpi": export_png_dpi},
         ],
         "series": series,
-        "provenance": {"input": str(Path(args.input).resolve())},
+        "provenance": {
+            "input": str(Path(args.input).resolve()),
+            "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        },
         "validation": {"required_columns": True, "warnings": validation_warnings},
     }
     return fig, manifest

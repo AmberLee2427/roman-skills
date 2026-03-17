@@ -3,10 +3,10 @@
 
 Workflow:
 1) Generate two synthetic event CSVs.
-2) Render each event with strict renderer.
+2) Render each event into a shared Matplotlib figure.
 3) Apply per-event custom styling.
 4) Save each customized event output.
-5) Compose a 2-row subplot figure by embedding each rendered figure image.
+5) Save a vector-native 2-row subplot figure.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from PIL import Image
 
 
 def load_roman_plot_module():
@@ -59,7 +59,15 @@ def build_event(csv_path: Path, center: float, depth: float, width: float) -> No
     df.to_csv(csv_path, index=False)
 
 
-def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
+def render_custom_event(
+    mod,
+    csv_path: Path,
+    out_stem: Path,
+    title: str,
+    target_axes=None,
+    apply_layout: bool = True,
+    save_outputs: bool = True,
+):
     argv = [
         "--input",
         str(csv_path),
@@ -93,7 +101,11 @@ def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
         title,
     ]
     args = mod.parse_args(argv)
-    fig, manifest = mod.render_lightcurve(args)
+    fig, manifest = mod.render_lightcurve(
+        args,
+        target_axes=target_axes,
+        apply_layout=apply_layout,
+    )
 
     for axis in fig.axes:
         axis.grid(True, which="major", alpha=0.24, linestyle="--")
@@ -108,32 +120,9 @@ def render_custom_event(mod, csv_path: Path, out_stem: Path, title: str):
         "Post-processing customization applied: gridlines."
     )
 
-    mod.write_outputs(fig, manifest, args)
-    return out_stem.with_suffix(".png")
-
-
-def compose_vertical_png(
-    image_paths: list[Path],
-    out_png: Path,
-    out_pdf: Path,
-    dpi: int = 300,
-) -> None:
-    images = [Image.open(p).convert("RGB") for p in image_paths]
-    widths = [img.width for img in images]
-    heights = [img.height for img in images]
-    max_width = max(widths)
-    total_height = sum(heights)
-
-    canvas = Image.new("RGB", (max_width, total_height), color=(255, 255, 255))
-    y = 0
-    for img in images:
-        x = (max_width - img.width) // 2
-        canvas.paste(img, (x, y))
-        y += img.height
-
-    out_png.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(out_png, dpi=(dpi, dpi))
-    canvas.save(out_pdf, resolution=dpi)
+    if save_outputs:
+        mod.write_outputs(fig, manifest, args)
+    return fig, manifest
 
 
 def main() -> None:
@@ -146,27 +135,66 @@ def main() -> None:
     build_event(event_a_csv, center=52.0, depth=0.85, width=7.5)
     build_event(event_b_csv, center=80.0, depth=0.55, width=10.0)
 
-    png_a = render_custom_event(
+    render_custom_event(
         mod=mod,
         csv_path=event_a_csv,
         out_stem=out_dir / "event_a_custom",
         title="Event A",
     )
-    png_b = render_custom_event(
+    render_custom_event(
         mod=mod,
         csv_path=event_b_csv,
         out_stem=out_dir / "event_b_custom",
         title="Event B",
     )
 
+    combo_fig = plt.figure(figsize=(6.8, 8.6))
+    gs = combo_fig.add_gridspec(
+        4,
+        1,
+        height_ratios=[3, 1, 3, 1],
+        hspace=0.08,
+    )
+    ax_a = combo_fig.add_subplot(gs[0])
+    ax_a_resid = combo_fig.add_subplot(gs[1], sharex=ax_a)
+    ax_b = combo_fig.add_subplot(gs[2])
+    ax_b_resid = combo_fig.add_subplot(gs[3], sharex=ax_b)
+
+    render_custom_event(
+        mod=mod,
+        csv_path=event_a_csv,
+        out_stem=out_dir / "two_events_subplots_event_a",
+        title="Event A",
+        target_axes=(ax_a, ax_a_resid),
+        apply_layout=False,
+        save_outputs=False,
+    )
+    render_custom_event(
+        mod=mod,
+        csv_path=event_b_csv,
+        out_stem=out_dir / "two_events_subplots_event_b",
+        title="Event B",
+        target_axes=(ax_b, ax_b_resid),
+        apply_layout=False,
+        save_outputs=False,
+    )
+
+    for axis in (ax_a, ax_b):
+        axis.tick_params(labelbottom=False)
+
+    combo_fig.align_ylabels((ax_a, ax_a_resid, ax_b, ax_b_resid))
+    combo_fig.subplots_adjust(
+        left=0.12,
+        right=0.97,
+        top=0.97,
+        bottom=0.08,
+        hspace=0.12,
+    )
     combo_pdf = out_dir / "two_events_subplots.pdf"
     combo_png = out_dir / "two_events_subplots.png"
-    compose_vertical_png(
-        [png_a, png_b],
-        combo_png,
-        combo_pdf,
-        dpi=300,
-    )
+    combo_fig.savefig(combo_pdf)
+    combo_fig.savefig(combo_png, dpi=300)
+    plt.close(combo_fig)
 
     print(f"Saved: {combo_pdf}")
     print(f"Saved: {combo_png}")
