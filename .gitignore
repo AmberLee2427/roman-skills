@@ -1,0 +1,23 @@
+# macos
+.DS_Store
+*/.DS_Store
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# virtualenv
+venv/
+env/
+ENV/
+
+# typescript
+node_modules/
+dist/
+build/
+
+# vscode
+.vscode/
+
